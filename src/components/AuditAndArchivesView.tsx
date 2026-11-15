@@ -116,53 +116,84 @@ export function AuditAndArchivesView({ session, uid }: AuditAndArchivesViewProps
               لا توجد تسجيلات جديدة في سجل الحركات حتى الآن.
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-right border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-600">
-                    <th className="py-3 px-4">التاريخ</th>
-                    <th className="py-3 px-4">الكود</th>
-                    <th className="py-3 px-4">الموظف</th>
-                    <th className="py-3 px-4">التصنيف والسبب</th>
-                    <th className="py-3 px-4 text-left">التغيير</th>
-                    <th className="py-3 px-4 text-left">الإجمالي بعد</th>
-                    <th className="py-3 px-4">المسجل</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50/70">
-                      <td className="py-2.5 px-4 text-xs text-slate-500 whitespace-nowrap">
-                        {log.dateLabel}
-                      </td>
-                      <td className="py-2.5 px-4 font-mono text-xs font-semibold text-slate-700 tabular-nums">
-                        {log.employeeCode || '-'}
-                      </td>
-                      <td className="py-2.5 px-4 font-semibold text-slate-900">
-                        {log.employeeName}
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <div className="text-xs font-semibold text-slate-700">{log.category}</div>
-                        <div className="text-xs text-slate-500">{log.reason}</div>
-                      </td>
-                      <td
-                        className={`py-2.5 px-4 text-left font-mono font-bold tabular-nums whitespace-nowrap ${
+            <>
+              <div className="md:hidden divide-y divide-slate-100">
+                {logs.map((log) => (
+                  <div key={log.id} className="p-4 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-bold text-sm text-slate-900">{log.employeeName}</div>
+                      <span
+                        className={`font-mono font-bold text-sm tabular-nums ${
                           log.delta > 0 ? 'text-red-600' : 'text-emerald-700'
                         }`}
                       >
                         {log.delta > 0 ? `+${log.delta} X` : `${log.delta} X`}
-                      </td>
-                      <td className="py-2.5 px-4 text-left font-mono font-semibold text-slate-900 tabular-nums whitespace-nowrap">
-                        {log.newExcess} X ({log.newDiscount}%)
-                      </td>
-                      <td className="py-2.5 px-4 text-xs text-slate-600">
-                        {log.recordedByName}
-                      </td>
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      <span className="font-semibold">{log.category}</span> — {log.reason}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1">
+                      <span>
+                        كود: <span className="font-mono">{log.employeeCode || '-'}</span> ·{' '}
+                        {log.dateLabel} · بواسطة: {log.recordedByName}
+                      </span>
+                      <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                        الإجمالي: {log.newExcess} X ({log.newDiscount}%)
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-right border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-600">
+                      <th className="py-3 px-4">التاريخ</th>
+                      <th className="py-3 px-4">الكود</th>
+                      <th className="py-3 px-4">الموظف</th>
+                      <th className="py-3 px-4">التصنيف والسبب</th>
+                      <th className="py-3 px-4 text-left">التغيير</th>
+                      <th className="py-3 px-4 text-left">الإجمالي بعد</th>
+                      <th className="py-3 px-4">المسجل</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {logs.map((log) => (
+                      <tr key={log.id} className="hover:bg-slate-50/70">
+                        <td className="py-2.5 px-4 text-xs text-slate-500 whitespace-nowrap">
+                          {log.dateLabel}
+                        </td>
+                        <td className="py-2.5 px-4 font-mono text-xs font-semibold text-slate-700 tabular-nums">
+                          {log.employeeCode || '-'}
+                        </td>
+                        <td className="py-2.5 px-4 font-semibold text-slate-900">
+                          {log.employeeName}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <div className="text-xs font-semibold text-slate-700">{log.category}</div>
+                          <div className="text-xs text-slate-500">{log.reason}</div>
+                        </td>
+                        <td
+                          className={`py-2.5 px-4 text-left font-mono font-bold tabular-nums whitespace-nowrap ${
+                            log.delta > 0 ? 'text-red-600' : 'text-emerald-700'
+                          }`}
+                        >
+                          {log.delta > 0 ? `+${log.delta} X` : `${log.delta} X`}
+                        </td>
+                        <td className="py-2.5 px-4 text-left font-mono font-semibold text-slate-900 tabular-nums whitespace-nowrap">
+                          {log.newExcess} X ({log.newDiscount}%)
+                        </td>
+                        <td className="py-2.5 px-4 text-xs text-slate-600">
+                          {log.recordedByName}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}

@@ -27,8 +27,6 @@ interface WorkerLookupViewProps {
   lastUpdatedEmployee: Employee | null;
 }
 
-const SAMPLE_CODES = ['43698', '53753', '50725', '956'];
-
 export function WorkerLookupView({
   summary,
   summaryLoading,
@@ -140,7 +138,7 @@ export function WorkerLookupView({
                   inputMode="numeric"
                   value={codeInput}
                   onChange={(e) => setCodeInput(e.target.value)}
-                  placeholder="أدخل كود الموظف (مثال: 43698)"
+                  placeholder="أدخل كود الموظف..."
                   autoComplete="off"
                   className="flex-1 min-h-[48px] px-4 py-3 rounded-lg border border-slate-300 bg-white text-slate-900 font-mono text-base placeholder:font-sans placeholder:text-slate-400 focus:border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600/15"
                 />
@@ -161,46 +159,28 @@ export function WorkerLookupView({
                 </p>
               )}
             </form>
-
-            {/* Quick Sample Codes */}
-            <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-slate-500">
-              <span>أكواد سريعة للتجربة:</span>
-              {SAMPLE_CODES.map((sample) => (
-                <button
-                  key={sample}
-                  type="button"
-                  onClick={() => {
-                    setCodeInput(sample);
-                    void runSearch(sample);
-                  }}
-                  className="font-mono font-semibold text-slate-700 hover:text-red-600 underline underline-offset-4 cursor-pointer"
-                >
-                  {sample}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Bottom Summary Strip + Refresh */}
           <div className="mt-8 pt-6 border-t border-slate-200 space-y-4">
             <div className="grid grid-cols-3 divide-x divide-x-reverse divide-slate-200 text-center">
-              <div className="px-2">
-                <div className="text-xl sm:text-2xl font-mono font-bold text-slate-900 tabular-nums">
+              <div className="px-1 sm:px-2">
+                <div className="text-lg sm:text-2xl font-mono font-bold text-slate-900 tabular-nums">
                   {summaryLoading ? '--' : summary?.totalEmployees ?? '--'}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">إجمالي الموظفين</div>
+                <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5">إجمالي الموظفين</div>
               </div>
-              <div className="px-2">
-                <div className="text-xl sm:text-2xl font-mono font-bold text-red-600 tabular-nums">
+              <div className="px-1 sm:px-2">
+                <div className="text-lg sm:text-2xl font-mono font-bold text-red-600 tabular-nums">
                   {summaryLoading ? '--' : `${summary?.avgDiscount ?? 0}%`}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">متوسط الخصم</div>
+                <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5">متوسط الخصم</div>
               </div>
-              <div className="px-2">
-                <div className="text-xl sm:text-2xl font-mono font-bold text-slate-900 tabular-nums">
+              <div className="px-1 sm:px-2">
+                <div className="text-lg sm:text-2xl font-mono font-bold text-slate-900 tabular-nums">
                   {summaryLoading ? '--' : summary?.totalExcess ?? '--'}
                 </div>
-                <div className="text-xs text-slate-500 mt-0.5">إجمالي الأكسات</div>
+                <div className="text-[11px] sm:text-xs text-slate-500 mt-0.5">إجمالي الأكسات</div>
               </div>
             </div>
 

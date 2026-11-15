@@ -89,7 +89,7 @@ export function XScoreModal({
       aria-modal="true"
       aria-labelledby="xscore-modal-title"
     >
-      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-lg shadow-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-lg max-h-[92dvh] overflow-y-auto shadow-xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
           <div>
             <h3 id="xscore-modal-title" className="text-lg font-bold text-slate-900">
