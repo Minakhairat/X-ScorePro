@@ -1,0 +1,412 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.size() >= 3
+        && request.auth.token.email.size() <= 120;
+    }
+
+    function isSuperAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'minakhairat1@gmail.com';
+    }
+
+    function hasLinkedAdmin() {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/user_admin_links/$(request.auth.uid));
+    }
+
+    function linkedAdminKey() {
+      return get(/databases/$(database)/documents/user_admin_links/$(request.auth.uid)).data.adminKey;
+    }
+
+    function linkedAdminData() {
+      return get(/databases/$(database)/documents/admins/$(linkedAdminKey())).data;
+    }
+
+    function isActiveAdmin() {
+      return hasLinkedAdmin()
+        && exists(/databases/$(database)/documents/admins/$(linkedAdminKey()))
+        && linkedAdminData().active == true
+        && linkedAdminData().email == request.auth.token.email;
+    }
+
+    function isActiveAssistantAdmin() {
+      return isActiveAdmin()
+        && linkedAdminData().role == 'assistant_admin'
+        && linkedAdminData().canAssignEmployees == true;
+    }
+
+    function isAssignedToEmployee(empId) {
+      return isActiveAdmin()
+        && exists(/databases/$(database)/documents/admins/$(linkedAdminKey())/assignedEmployees/$(empId));
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidEmployee(data) {
+      return data.keys().hasAll([
+          'serial', 'code', 'name', 'department', 'excessCount',
+          'discountPercentage', 'recentLogs', 'assignedAdminKeys', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'serial', 'code', 'name', 'department', 'excessCount',
+          'discountPercentage', 'recentLogs', 'assignedAdminKeys', 'createdAt', 'updatedAt'
+        ])
+        && data.serial is number && data.serial >= 0 && data.serial <= 1000000
+        && data.code is string && data.code.size() <= 32
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.department is string && data.department.size() <= 80
+        && data.excessCount is number && data.excessCount >= 0 && data.excessCount <= 100000
+        && data.discountPercentage is number && data.discountPercentage >= 0 && data.discountPercentage <= 100
+        && data.recentLogs is list && data.recentLogs.size() <= 50
+        && (data.recentLogs.size() == 0 || data.recentLogs[0] is map)
+        && data.assignedAdminKeys is list && data.assignedAdminKeys.size() <= 15
+        && (data.assignedAdminKeys.size() == 0 || (data.assignedAdminKeys[0] is string && data.assignedAdminKeys[0].size() <= 64))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStatsSummary(data) {
+      return data.keys().hasAll([
+          'totalEmployees', 'avgDiscount', 'totalExcess',
+          'employeesWithExcess', 'seedInitialized', 'cycleLabel', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'totalEmployees', 'avgDiscount', 'totalExcess',
+          'employeesWithExcess', 'seedInitialized', 'cycleLabel', 'updatedAt'
+        ])
+        && data.totalEmployees is number && data.totalEmployees >= 0 && data.totalEmployees <= 100000
+        && data.avgDiscount is number && data.avgDiscount >= 0 && data.avgDiscount <= 100
+        && data.totalExcess is number && data.totalExcess >= 0 && data.totalExcess <= 10000000
+        && data.employeesWithExcess is number && data.employeesWithExcess >= 0 && data.employeesWithExcess <= 100000
+        && data.seedInitialized is bool
+        && data.cycleLabel is string && data.cycleLabel.size() >= 1 && data.cycleLabel.size() <= 60
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDirectoryIndex(data) {
+      return data.keys().hasAll(['items', 'updatedAt'])
+        && data.keys().hasOnly(['items', 'updatedAt'])
+        && data.items is list && data.items.size() <= 2000
+        && (data.items.size() == 0 || data.items[0] is map)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll([
+          'email', 'displayName', 'role', 'canAssignEmployees',
+          'active', 'assignedCount', 'createdByEmail', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'email', 'displayName', 'role', 'canAssignEmployees',
+          'active', 'assignedCount', 'createdByEmail', 'createdAt', 'updatedAt'
+        ])
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.role is string && (data.role == 'assistant_admin' || data.role == 'supervisor')
+        && data.canAssignEmployees is bool
+        && data.active is bool
+        && data.assignedCount is number && data.assignedCount >= 0 && data.assignedCount <= 10000
+        && data.createdByEmail is string && data.createdByEmail.size() >= 3 && data.createdByEmail.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminAssignment(data) {
+      return data.keys().hasAll([
+          'employeeId', 'employeeCode', 'employeeName', 'assignedByUid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'employeeId', 'employeeCode', 'employeeName', 'assignedByUid', 'createdAt'
+        ])
+        && data.employeeId is string && isValidId(data.employeeId) && data.employeeId.size() <= 64
+        && data.employeeCode is string && data.employeeCode.size() <= 32
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 120
+        && data.assignedByUid is string && data.assignedByUid == request.auth.uid && data.assignedByUid.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidUserAdminLink(data, uid) {
+      return data.keys().hasAll(['uid', 'adminKey', 'email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'adminKey', 'email', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == uid && data.uid.size() <= 128
+        && data.adminKey is string && isValidId(data.adminKey) && data.adminKey.size() <= 64
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidXScoreLog(data) {
+      return data.keys().hasAll([
+          'employeeId', 'employeeCode', 'employeeName', 'delta',
+          'previousExcess', 'newExcess', 'previousDiscount', 'newDiscount',
+          'reason', 'category', 'dateLabel',
+          'recordedByUid', 'recordedByName', 'recordedByRole', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'employeeId', 'employeeCode', 'employeeName', 'delta',
+          'previousExcess', 'newExcess', 'previousDiscount', 'newDiscount',
+          'reason', 'category', 'dateLabel',
+          'recordedByUid', 'recordedByName', 'recordedByRole', 'createdAt'
+        ])
+        && data.employeeId is string && isValidId(data.employeeId) && data.employeeId.size() <= 64
+        && data.employeeCode is string && data.employeeCode.size() <= 32
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 120
+        && data.delta is number && data.delta >= -1000 && data.delta <= 1000
+        && data.previousExcess is number && data.previousExcess >= 0 && data.previousExcess <= 100000
+        && data.newExcess is number && data.newExcess >= 0 && data.newExcess <= 100000
+        && data.previousDiscount is number && data.previousDiscount >= 0 && data.previousDiscount <= 100
+        && data.newDiscount is number && data.newDiscount >= 0 && data.newDiscount <= 100
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 200
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 60
+        && data.dateLabel is string && data.dateLabel.size() <= 40
+        && data.recordedByUid is string && data.recordedByUid == request.auth.uid && data.recordedByUid.size() <= 128
+        && data.recordedByName is string && data.recordedByName.size() >= 1 && data.recordedByName.size() <= 80
+        && data.recordedByRole is string && data.recordedByRole.size() >= 1 && data.recordedByRole.size() <= 32
+        && data.createdAt is timestamp;
+    }
+
+    function isValidMonthlyArchive(data) {
+      return data.keys().hasAll([
+          'title', 'totalEmployees', 'penalizedEmployees', 'totalExcess',
+          'avgDiscount', 'records', 'closedByUid', 'closedByName', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'title', 'totalEmployees', 'penalizedEmployees', 'totalExcess',
+          'avgDiscount', 'records', 'closedByUid', 'closedByName', 'createdAt'
+        ])
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
+        && data.totalEmployees is number && data.totalEmployees >= 0 && data.totalEmployees <= 100000
+        && data.penalizedEmployees is number && data.penalizedEmployees >= 0 && data.penalizedEmployees <= 100000
+        && data.totalExcess is number && data.totalExcess >= 0 && data.totalExcess <= 10000000
+        && data.avgDiscount is number && data.avgDiscount >= 0 && data.avgDiscount <= 100
+        && data.records is list && data.records.size() <= 1000
+        && (data.records.size() == 0 || data.records[0] is map)
+        && data.closedByUid is string && data.closedByUid == request.auth.uid && data.closedByUid.size() <= 128
+        && data.closedByName is string && data.closedByName.size() >= 1 && data.closedByName.size() <= 80
+        && data.createdAt is timestamp;
+    }
+
+    // 4. Collection Match Blocks
+    match /employees/{employeeId} {
+      // Single-doc lookup by exact code (no PII stored on employees)
+      allow get: if isValidId(employeeId);
+      // Full roster listing strictly for Super Admin
+      allow list: if isSuperAdmin();
+
+      allow create: if isValidId(employeeId)
+        && isValidEmployee(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isSuperAdmin();
+
+      allow update: if isValidId(employeeId)
+        && isValidEmployee(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin()
+          || (
+            isActiveAssistantAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['assignedAdminKeys', 'updatedAt'])
+          )
+          || (
+            (isAssignedToEmployee(employeeId) || isActiveAssistantAdmin())
+            && incoming().diff(existing()).affectedKeys().hasOnly(['excessCount', 'discountPercentage', 'recentLogs', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(employeeId) && isSuperAdmin();
+    }
+
+    match /stats/{statId} {
+      allow get: if isValidId(statId);
+      allow list: if false;
+
+      allow create: if isValidId(statId)
+        && isValidStatsSummary(incoming())
+        && incoming().updatedAt == request.time
+        && (isSuperAdmin() || isActiveAdmin());
+
+      allow update: if isValidId(statId)
+        && isValidStatsSummary(incoming())
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin()
+          || (
+            isActiveAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['avgDiscount', 'totalExcess', 'employeesWithExcess', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(statId) && isSuperAdmin();
+    }
+
+    match /directory/{docId} {
+      allow get: if isValidId(docId) && (isSuperAdmin() || isActiveAdmin());
+      allow list: if false;
+
+      allow create: if isValidId(docId)
+        && isValidDirectoryIndex(incoming())
+        && incoming().updatedAt == request.time
+        && isSuperAdmin();
+
+      allow update: if isValidId(docId)
+        && isValidDirectoryIndex(incoming())
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin()
+          || (
+            isActiveAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['items', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(docId) && isSuperAdmin();
+    }
+
+    match /admins/{adminKey} {
+      allow get: if isValidId(adminKey)
+        && (isSuperAdmin() || (isVerifiedUser() && existing().email == request.auth.token.email));
+
+      // Query enforcer: non-super-admins can ONLY query their own email row (no get() in list)
+      allow list: if isSuperAdmin()
+        || (isVerifiedUser() && existing().email == request.auth.token.email);
+
+      allow create: if isValidId(adminKey)
+        && isValidAdminRecord(incoming())
+        && incoming().createdByEmail == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isSuperAdmin();
+
+      allow update: if isValidId(adminKey)
+        && isValidAdminRecord(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdByEmail == existing().createdByEmail
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin()
+          || (
+            isActiveAssistantAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['assignedCount', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(adminKey) && isSuperAdmin();
+
+      match /assignedEmployees/{employeeId} {
+        allow get: if isValidId(adminKey)
+          && isValidId(employeeId)
+          && (isSuperAdmin() || isActiveAdmin());
+
+        allow list: if isSuperAdmin();
+
+        allow create: if isValidId(adminKey)
+          && isValidId(employeeId)
+          && isValidAdminAssignment(incoming())
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/admins/$(adminKey))
+          && exists(/databases/$(database)/documents/employees/$(employeeId))
+          && incoming().employeeId == employeeId
+          && (isSuperAdmin() || isActiveAssistantAdmin());
+
+        allow update: if false;
+
+        allow delete: if isValidId(adminKey)
+          && isValidId(employeeId)
+          && (isSuperAdmin() || isActiveAssistantAdmin());
+      }
+    }
+
+    match /user_admin_links/{uid} {
+      allow get: if isValidId(uid) && (isSuperAdmin() || (isVerifiedUser() && request.auth.uid == uid));
+      allow list: if isSuperAdmin();
+
+      allow create: if isValidId(uid)
+        && isVerifiedUser()
+        && request.auth.uid == uid
+        && isValidUserAdminLink(incoming(), uid)
+        && incoming().email == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/admins/$(incoming().adminKey))
+        && get(/databases/$(database)/documents/admins/$(incoming().adminKey)).data.email == request.auth.token.email
+        && get(/databases/$(database)/documents/admins/$(incoming().adminKey)).data.active == true;
+
+      allow update: if isValidId(uid)
+        && isVerifiedUser()
+        && request.auth.uid == uid
+        && isValidUserAdminLink(incoming(), uid)
+        && incoming().email == request.auth.token.email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['adminKey', 'updatedAt'])
+        && exists(/databases/$(database)/documents/admins/$(incoming().adminKey))
+        && get(/databases/$(database)/documents/admins/$(incoming().adminKey)).data.email == request.auth.token.email
+        && get(/databases/$(database)/documents/admins/$(incoming().adminKey)).data.active == true;
+
+      allow delete: if isValidId(uid) && isSuperAdmin();
+    }
+
+    match /xscore_logs/{logId} {
+      allow get: if isValidId(logId)
+        && (isSuperAdmin() || (isVerifiedUser() && existing().recordedByUid == request.auth.uid));
+
+      allow list: if isSuperAdmin()
+        || (isVerifiedUser() && existing().recordedByUid == request.auth.uid);
+
+      allow create: if isValidId(logId)
+        && isValidXScoreLog(incoming())
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
+        && (
+          isSuperAdmin()
+          || isActiveAssistantAdmin()
+          || isAssignedToEmployee(incoming().employeeId)
+        );
+
+      allow update: if false;
+      allow delete: if isValidId(logId) && isSuperAdmin();
+    }
+
+    match /monthly_archives/{archiveId} {
+      allow get: if isValidId(archiveId) && (isSuperAdmin() || isActiveAdmin());
+      allow list: if isSuperAdmin();
+
+      allow create: if isValidId(archiveId)
+        && isValidMonthlyArchive(incoming())
+        && incoming().createdAt == request.time
+        && isSuperAdmin();
+
+      allow update: if false;
+      allow delete: if isValidId(archiveId) && isSuperAdmin();
+    }
+  }
+}

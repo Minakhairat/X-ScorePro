@@ -1,0 +1,6 @@
+{
+  "name": "X-Score System | نظام تقييم الأداء والجزاءات",
+  "description": "نظام X-Score لإدارة تقييم الموظفين والخصومات والحوافز بمصنع المبرد الصحراوي والميكروويف",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

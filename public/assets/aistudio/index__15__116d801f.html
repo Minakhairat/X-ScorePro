@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>X-Score System</title>
+    <style>
+        /* Reset وتنسيقات عامة */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-red: #d32f2f;
+            --dark-red: #b71c1c;
+            --light-red: #ff6659;
+            --lighter-red: #ffcdd2;
+            --white: #ffffff;
+            --light-gray: #f5f5f5;
+            --gray: #e0e0e0;
+            --dark-gray: #757575;
+            --black: #333333;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.15);
+            --transition: all 0.3s ease;
+            --border-radius: 12px;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            color: var(--black);
+            min-height: 100vh;
+            line-height: 1.5;
+            direction: rtl;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 16px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* الهيدر - محسن للشاشات الصغيرة */
+        .header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0;
+            margin-bottom: 24px;
+            border-bottom: 2px solid var(--primary-red);
+            text-align: center;
+            gap: 16px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .logo i {
+            font-size: 2rem;
+            color: var(--primary-red);
+            min-width: 40px;
+        }
+
+        .logo h1 {
+            font-size: 1.5rem;
+            color: var(--primary-red);
+            font-weight: 700;
+            line-height: 1.3;
+        }
+
+        .company-name {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--white);
+            background-color: var(--primary-red);
+            padding: 8px 16px;
+            border-radius: 20px;
+            width: fit-content;
+            margin: 0 auto;
+        }
+
+        /* المحتوى الرئيسي - محسن للجميع */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        @media (min-width: 768px) {
+            .main-content {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 24px;
+            }
+            
+            .header {
+                flex-direction: row;
+                justify-content: space-between;
+                text-align: right;
+            }
+            
+            .logo {
+                justify-content: flex-start;
+            }
+            
+            .company-name {
+                margin: 0;
+            }
+        }
+
+        /* بطاقة البحث - تصميم محسن */
+        .search-card, .result-card {
+            background-color: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+            transition: var(--transition);
+            border: 1px solid var(--gray);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .search-card {
+            min-height: 380px;
+        }
+
+        @media (max-width: 767px) {
+            .search-card, .result-card {
+                padding: 20px;
+                min-height: auto;
+            }
+        }
+
+        .search-card:hover, .result-card:hover {
+            box-shadow: var(--shadow-hover);
+        }
+
+        .search-header, .result-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid var(--lighter-red);
+        }
+
+        .search-header i, .result-header i {
+            font-size: 1.8rem;
+            color: var(--primary-red);
+            min-width: 40px;
+        }
+
+        .search-header h2, .result-header h2 {
+            font-size: 1.4rem;
+            color: var(--primary-red);
+            font-weight: 700;
+        }
+
+        .search-description {
+            color: var(--dark-gray);
+            margin-bottom: 24px;
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        /* إدخال البحث - محسن للشاشات الصغيرة */
+        .search-input-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 24px;
+            width: 100%;
+        }
+
+        @media (min-width: 480px) {
+            .search-input-container {
+                flex-direction: row;
+            }
+        }
+
+        #employeeCode {
+            flex: 1;
+            padding: 16px;
+            border: 2px solid var(--gray);
+            border-radius: 10px;
+            font-size: 1.1rem;
+            font-family: inherit;
+            transition: var(--transition);
+            outline: none;
+            min-height: 56px;
+            width: 100%;
+        }
+
+        #employeeCode:focus {
+            border-color: var(--primary-red);
+            box-shadow: 0 0 0 3px rgba(211, 47, 47, 0.15);
+        }
+
+        .search-btn {
+            background-color: var(--primary-red);
+            color: var(--white);
+            border: none;
+            border-radius: 10px;
+            padding: 16px 24px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            font-family: inherit;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-height: 56px;
+            min-width: 120px;
+        }
+
+        .search-btn:hover:not(:disabled) {
+            background-color: var(--dark-red);
+            transform: translateY(-2px);
+        }
+
+        .search-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .search-btn:disabled {
+            background-color: var(--dark-gray);
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        /* رسالة حالة الاتصال */
+        .connection-status {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 0.95rem;
+        }
+
+        .connection-status.error {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+
+        .connection-status.success {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+            color: #155724;
+        }
+
+        .connection-status i {
+            font-size: 1.2rem;
+        }
+
+        /* قسم النتائج */
+        .employee-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            background-color: var(--light-gray);
+            border-radius: 10px;
+            margin-bottom: 20px;
+            min-height: 200px;
+        }
+
+        .placeholder-message {
+            text-align: center;
+            color: var(--dark-gray);
+            padding: 10px;
+        }
+
+        .placeholder-message i {
+            font-size: 2.5rem;
+            color: var(--gray);
+            margin-bottom: 16px;
+        }
+
+        .placeholder-message p {
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+        }
+
+        /* بيانات الموظف عند ظهورها */
+        .employee-details {
+            width: 100%;
+        }
+
+        .detail-row {
+            display: flex;
+            flex-direction: column;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--gray);
+            gap: 8px;
+        }
+
+        @media (min-width: 480px) {
+            .detail-row {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+                gap: 20px;
+            }
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: var(--dark-gray);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95rem;
+            min-width: 140px;
+        }
+
+        .detail-label i {
+            color: var(--primary-red);
+            font-size: 1.2rem;
+            width: 24px;
+        }
+
+        .detail-value {
+            font-weight: 700;
+            color: var(--black);
+            font-size: 1.1rem;
+            text-align: left;
+            flex: 1;
+        }
+
+        @media (min-width: 480px) {
+            .detail-value {
+                text-align: right;
+            }
+        }
+
+        .discount-value, .excess-value {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .discount-value {
+            color: var(--primary-red);
+            background-color: var(--lighter-red);
+        }
+
+        .excess-value {
+            color: var(--dark-red);
+            background-color: #ffebee;
+        }
+
+        /* الإحصائيات - تصميم متجاوب */
+        .statistics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 767px) {
+            .statistics {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 10px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .statistics {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+        }
+
+        .stat-card {
+            background-color: var(--light-gray);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            border-top: 4px solid var(--primary-red);
+            transition: var(--transition);
+            min-height: 100px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow);
+        }
+
+        .stat-icon {
+            font-size: 1.8rem;
+            color: var(--primary-red);
+            margin-bottom: 8px;
+        }
+
+        .stat-info h3 {
+            font-size: 1.6rem;
+            color: var(--dark-red);
+            margin-bottom: 4px;
+            font-weight: 700;
+        }
+
+        .stat-info p {
+            color: var(--dark-gray);
+            font-size: 0.85rem;
+        }
+
+        /* الفوتر - محسن */
+        .footer {
+            text-align: center;
+            padding: 20px 0;
+            margin-top: 30px;
+            border-top: 1px solid var(--gray);
+            color: var(--dark-gray);
+            font-size: 0.9rem;
+        }
+
+        .footer-info {
+            margin-top: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        @media (min-width: 480px) {
+            .footer-info {
+                flex-direction: row;
+                justify-content: center;
+                gap: 20px;
+            }
+        }
+
+        .footer-info i {
+            color: var(--primary-red);
+            margin-left: 5px;
+        }
+
+        .footer a {
+            color: var(--primary-red);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* نافذة التحميل */
+        .loader-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            display: none;
+        }
+
+        .loader {
+            background-color: var(--white);
+            padding: 30px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: var(--shadow);
+            max-width: 90%;
+            width: 300px;
+        }
+
+        .loader-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid var(--lighter-red);
+            border-top: 4px solid var(--primary-red);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loader p {
+            font-size: 1.1rem;
+            color: var(--dark-red);
+            font-weight: 600;
+        }
+
+        /* نافذة التنبيه */
+        .alert {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1001;
+            display: none;
+            padding: 20px;
+        }
+
+        .alert-content {
+            background-color: var(--white);
+            padding: 25px;
+            border-radius: var(--border-radius);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: var(--shadow-hover);
+            border-top: 5px solid var(--primary-red);
+        }
+
+        .alert-content i {
+            font-size: 2.5rem;
+            color: var(--primary-red);
+            margin-bottom: 16px;
+        }
+
+        .alert-content p {
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+            color: var(--black);
+            line-height: 1.6;
+        }
+
+        .alert-btn {
+            background-color: var(--primary-red);
+            color: var(--white);
+            border: none;
+            border-radius: 8px;
+            padding: 12px 30px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            font-family: inherit;
+            width: 100%;
+            max-width: 200px;
+        }
+
+        .alert-btn:hover {
+            background-color: var(--dark-red);
+            transform: translateY(-2px);
+        }
+
+        /* زر تحديث البيانات */
+        .refresh-btn {
+            background-color: var(--primary-red);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: var(--transition);
+            width: 100%;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: auto;
+            min-height: 50px;
+        }
+
+        .refresh-btn:hover:not(:disabled) {
+            background-color: var(--dark-red);
+            transform: translateY(-2px);
+        }
+
+        .refresh-btn:disabled {
+            background-color: var(--dark-gray);
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        /* تأثيرات إضافية */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .search-card, .result-card {
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        /* تحسينات للشاشات الكبيرة جداً */
+        @media (min-width: 1200px) {
+            .container {
+                padding: 24px;
+            }
+            
+            .search-card, .result-card {
+                padding: 32px;
+            }
+            
+            .logo h1 {
+                font-size: 1.8rem;
+            }
+        }
+
+        /* تحسينات للشاشات الصغيرة جداً */
+        @media (max-width: 360px) {
+            .container {
+                padding: 12px;
+            }
+            
+            .search-card, .result-card {
+                padding: 16px;
+            }
+            
+            .logo h1 {
+                font-size: 1.3rem;
+            }
+            
+            .search-header h2, .result-header h2 {
+                font-size: 1.2rem;
+            }
+            
+            #employeeCode, .search-btn {
+                min-height: 50px;
+            }
+        }
+
+        /* تحسينات للوضع الأفقي على الموبايل */
+        @media (max-height: 600px) and (orientation: landscape) {
+            .header {
+                padding: 12px 0;
+                margin-bottom: 16px;
+            }
+            
+            .main-content {
+                gap: 16px;
+            }
+            
+            .search-card, .result-card {
+                padding: 16px;
+                min-height: auto;
+            }
+            
+            .employee-info {
+                min-height: 150px;
+                padding: 12px;
+            }
+        }
+    </style>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-industry"></i>
+                <h1>X-Score System</h1>
+            </div>
+            <div class="company-name">مصنع المبرد الصحراوي و الميكروويف </div>
+        </header>
+
+        <main class="main-content">
+            <section class="search-section">
+                <div class="search-card">
+                    <div class="search-header">
+                        <i class="fas fa-search"></i>
+                        <h2>بحث عن موظف</h2>
+                    </div>
+                    
+                    <!-- حالة الاتصال -->
+                    <div id="connectionStatus" class="connection-status">
+                        <i class="fas fa-sync-alt fa-spin"></i>
+                        <span>جاري الاتصال بملف البيانات...</span>
+                    </div>
+                    
+                    <p class="search-description">أدخل الكود الخاص بالموظف ثم اضغط بحث للعثور على بياناته</p>
+                    
+                    <div class="search-input-container">
+                        <input 
+                            type="text" 
+                            id="employeeCode" 
+                            placeholder="أدخل كود الموظف..." 
+                            autocomplete="off"
+                            disabled
+                        >
+                        <button id="searchBtn" class="search-btn" disabled>
+                            <i class="fas fa-search"></i> بحث
+                        </button>
+                    </div>
+                    
+                    <button id="refreshBtn" class="refresh-btn" disabled>
+                        <i class="fas fa-sync-alt"></i> إعادة تحميل البيانات
+                    </button>
+                </div>
+            </section>
+
+            <section class="result-section" id="resultSection">
+                <div class="result-card">
+                    <div class="result-header">
+                        <i class="fas fa-user-tie"></i>
+                        <h2>بيانات الموظف</h2>
+                    </div>
+                    
+                    <div class="employee-info" id="employeeInfo">
+                        <div class="placeholder-message">
+                            <i class="fas fa-database"></i>
+                            <p>يجب الاتصال بملف البيانات أولاً</p>
+                            <p style="font-size: 0.9rem; color: var(--dark-gray); margin-top: 8px;">
+                                انتظر اكتمال التحميل ثم ابحث بكود الموظف
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="statistics">
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-users"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="totalEmployees">--</h3>
+                                <p>إجمالي الموظفين</p>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-percentage"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="avgDiscount">--</h3>
+                                <p>متوسط الخصم</p>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">
+                                <i class="fas fa-boxes"></i>
+                            </div>
+                            <div class="stat-info">
+                                <h3 id="totalExcess">--</h3>
+                                <p>إجمالي الأكسات</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p>© 2025  جميع الحقوق محفوظة. ادارة العمليات. مصنع المبرد الصحراوي و الميكروويف. </p>
+            <div class="footer-info">
+                <p>
+                    <i class="fas fa-link"></i> 
+                    <a href="https://docs.google.com/spreadsheets/d/13mol6dhvPPN2SniU8950xapNHMnyT69f/edit" target="_blank">
+                        رابط ملف البيانات
+                    </a>
+                </p>
+                <p id="lastUpdateTime">
+                    <i class="fas fa-clock"></i> آخر تحديث: لم يتم بعد
+                </p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- نافذة التحميل -->
+    <div class="loader-overlay" id="loader">
+        <div class="loader">
+            <div class="loader-spinner"></div>
+            <p id="loaderText">جاري تحميل البيانات...</p>
+        </div>
+    </div>
+
+    <!-- نافذة التنبيه -->
+    <div class="alert" id="alert">
+        <div class="alert-content">
+            <i class="fas fa-exclamation-triangle" id="alertIcon"></i>
+            <p id="alertMessage"></p>
+            <button class="alert-btn" id="alertBtn">موافق</button>
+        </div>
+    </div>
+
+    <script>
+        // ========== تهيئة المتغيرات العامة ==========
+        let employeesData = [];
+        let isConnected = false;
+        let lastLoadedTime = null;
+        
+        // عناصر DOM
+        const employeeCodeInput = document.getElementById('employeeCode');
+        const searchBtn = document.getElementById('searchBtn');
+        const employeeInfo = document.getElementById('employeeInfo');
+        const totalEmployeesEl = document.getElementById('totalEmployees');
+        const avgDiscountEl = document.getElementById('avgDiscount');
+        const totalExcessEl = document.getElementById('totalExcess');
+        const loader = document.getElementById('loader');
+        const loaderText = document.getElementById('loaderText');
+        const alertBox = document.getElementById('alert');
+        const alertMessage = document.getElementById('alertMessage');
+        const alertBtn = document.getElementById('alertBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const lastUpdateTime = document.getElementById('lastUpdateTime');
+        
+        // ========== وظائف مساعدة ==========
+        function showLoader(text = 'جاري تحميل البيانات...') {
+            loaderText.textContent = text;
+            loader.style.display = 'flex';
+        }
+        
+        function hideLoader() {
+            loader.style.display = 'none';
+        }
+        
+        function showAlert(message, type = 'info') {
+            alertMessage.innerHTML = message;
+            
+            const alertIcon = document.getElementById('alertIcon');
+            if (type === 'error') {
+                alertIcon.className = 'fas fa-exclamation-circle';
+                alertIcon.style.color = '#d32f2f';
+            } else if (type === 'warning') {
+                alertIcon.className = 'fas fa-exclamation-triangle';
+                alertIcon.style.color = '#ff9800';
+            } else if (type === 'success') {
+                alertIcon.className = 'fas fa-check-circle';
+                alertIcon.style.color = '#4CAF50';
+            } else {
+                alertIcon.className = 'fas fa-info-circle';
+                alertIcon.style.color = '#2196f3';
+            }
+            
+            alertBox.style.display = 'flex';
+        }
+        
+        function hideAlert() {
+            alertBox.style.display = 'none';
+        }
+        
+        function updateConnectionStatus(message, type = 'loading') {
+            connectionStatus.innerHTML = '';
+            
+            let icon, className;
+            
+            switch(type) {
+                case 'loading':
+                    icon = '<i class="fas fa-sync-alt fa-spin"></i>';
+                    className = '';
+                    break;
+                case 'success':
+                    icon = '<i class="fas fa-check-circle"></i>';
+                    className = 'success';
+                    break;
+                case 'error':
+                    icon = '<i class="fas fa-times-circle"></i>';
+                    className = 'error';
+                    break;
+                case 'warning':
+                    icon = '<i class="fas fa-exclamation-triangle"></i>';
+                    className = 'error';
+                    break;
+            }
+            
+            connectionStatus.className = `connection-status ${className}`;
+            connectionStatus.innerHTML = `${icon} <span>${message}</span>`;
+        }
+        
+        function enableSearch() {
+            employeeCodeInput.disabled = false;
+            searchBtn.disabled = false;
+            refreshBtn.disabled = false;
+            employeeCodeInput.focus();
+        }
+        
+        function disableSearch() {
+            employeeCodeInput.disabled = true;
+            searchBtn.disabled = true;
+            refreshBtn.disabled = true;
+        }
+        
+        // ========== جلب البيانات من Google Sheets ==========
+        async function loadDataFromGoogleSheets() {
+            updateConnectionStatus('جاري الاتصال بملف البيانات...', 'loading');
+            disableSearch();
+            showLoader('جاري تحميل البيانات من ملف Excel...');
+            
+            try {
+                // استخراج ID الملف من الرابط
+                const fileId = '13mol6dhvPPN2SniU8950xapNHMnyT69f';
+                
+                // طريقة مباشرة لتحميل Excel كملف CSV
+                const csvUrl = `https://docs.google.com/spreadsheets/d/${fileId}/gviz/tq?tqx=out:csv`;
+                
+                const response = await fetch(csvUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`خطأ في الاتصال: ${response.status} ${response.statusText}`);
+                }
+                
+                const csvText = await response.text();
+                
+                if (!csvText || csvText.trim().length === 0) {
+                    throw new Error('ملف البيانات فارغ');
+                }
+                
+                // تحليل بيانات CSV
+                parseCSVData(csvText);
+                
+                // تسجيل وقت التحميل الأخير
+                lastLoadedTime = new Date();
+                isConnected = true;
+                
+                // تحديث واجهة المستخدم
+                updateUI();
+                enableSearch();
+                
+                hideLoader();
+                updateConnectionStatus('تم الاتصال بملف البيانات بنجاح', 'success');
+                showAlert(`✅ تم تحميل ${employeesData.length} سجل بنجاح!`, 'success');
+                
+            } catch (error) {
+                console.error('خطأ في تحميل البيانات:', error);
+                hideLoader();
+                
+                // إعادة تعيين البيانات
+                employeesData = [];
+                isConnected = false;
+                
+                // تحديث حالة الاتصال
+                updateConnectionStatus('فشل الاتصال بملف البيانات', 'error');
+                
+                // عرض رسالة الخطأ
+                showAlert(`❌ فشل الاتصال بملف Excel<br><br>
+                <small>تأكد من:<br>
+                1. مشاركة الملف للجميع<br>
+                2. صحة الرابط<br>
+                3. اتصال الإنترنت</small>`, 'error');
+                
+                // تعطيل البحث
+                disableSearch();
+                resetUI();
+            }
+        }
+        
+        function parseCSVData(csvText) {
+            try {
+                const lines = csvText.split('\n').filter(line => line.trim() !== '');
+                
+                if (lines.length < 2) {
+                    throw new Error('البيانات غير كافية');
+                }
+                
+                // استخراج العناوين
+                const headers = lines[0].split(',').map(header => {
+                    return header.replace(/"/g, '').trim();
+                });
+                
+                // تحويل كل سطر إلى كائن
+                employeesData = [];
+                
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i];
+                    const values = [];
+                    let currentValue = '';
+                    let insideQuotes = false;
+                    
+                    // معالجة القيم التي تحتوي على فواصل داخل علامات الاقتباس
+                    for (let char of line) {
+                        if (char === '"') {
+                            insideQuotes = !insideQuotes;
+                        } else if (char === ',' && !insideQuotes) {
+                            values.push(currentValue.trim());
+                            currentValue = '';
+                        } else {
+                            currentValue += char;
+                        }
+                    }
+                    values.push(currentValue.trim());
+                    
+                    // إنشاء كائن للموظف
+                    const employee = {};
+                    headers.forEach((header, index) => {
+                        let value = values[index] || '';
+                        value = value.replace(/"/g, '').trim();
+                        employee[header] = value;
+                    });
+                    
+                    // التأكد من وجود بيانات أساسية
+                    if (employee['الكود'] && employee['الكود'].trim() !== '') {
+                        employeesData.push(employee);
+                    }
+                }
+                
+                console.log(`تم تحليل ${employeesData.length} سجل`);
+                
+            } catch (error) {
+                throw new Error(`خطأ في تحليل البيانات: ${error.message}`);
+            }
+        }
+        
+        // ========== تحديث واجهة المستخدم ==========
+        function updateUI() {
+            if (!isConnected || employeesData.length === 0) {
+                resetUI();
+                return;
+            }
+            
+            // تحديث الإحصائيات
+            updateStatistics();
+            
+            // تحديث وقت التحميل الأخير
+            updateLastLoadTime();
+            
+            // عرض رسالة في قسم النتائج
+            employeeInfo.innerHTML = `
+                <div class="placeholder-message">
+                    <i class="fas fa-database"></i>
+                    <p>تم تحميل ${employeesData.length} سجل</p>
+                    <p style="font-size: 0.9rem; color: var(--dark-gray); margin-top: 8px;">
+                        أدخل كود موظف في خانة البحث
+                    </p>
+                </div>
+            `;
+            
+            // تفعيل الزر لإعادة التحميل
+            refreshBtn.disabled = false;
+        }
+        
+        function resetUI() {
+            totalEmployeesEl.textContent = '--';
+            avgDiscountEl.textContent = '--';
+            totalExcessEl.textContent = '--';
+            
+            employeeInfo.innerHTML = `
+                <div class="placeholder-message">
+                    <i class="fas fa-unlink"></i>
+                    <p>لا يوجد اتصال بملف البيانات</p>
+                </div>
+            `;
+            
+            lastUpdateTime.innerHTML = '<i class="fas fa-clock"></i> آخر تحديث: لم يتم بعد';
+            
+            refreshBtn.disabled = false;
+        }
+        
+        function updateStatistics() {
+            if (!isConnected || employeesData.length === 0) {
+                totalEmployeesEl.textContent = '--';
+                avgDiscountEl.textContent = '--';
+                totalExcessEl.textContent = '--';
+                return;
+            }
+            
+            // إجمالي الموظفين
+            totalEmployeesEl.textContent = employeesData.length;
+            
+            // متوسط نسبة الخصم
+            let totalDiscount = 0;
+            let discountCount = 0;
+            
+            employeesData.forEach(emp => {
+                const discountStr = emp['نسبة الخصم'] || emp['نسبة_الخصم'] || '0';
+                const discount = parseFloat(discountStr.toString().replace('%', '').replace('٪', '')) || 0;
+                if (discount > 0) {
+                    totalDiscount += discount;
+                    discountCount++;
+                }
+            });
+            
+            const avgDiscount = discountCount > 0 ? Math.round(totalDiscount / discountCount) : 0;
+            avgDiscountEl.textContent = `${avgDiscount}%`;
+            
+            // إجمالي الأكسات
+            let totalExcess = 0;
+            
+            employeesData.forEach(emp => {
+                const excessStr = emp['عدد الاكسات'] || emp['عدد_الاكسات'] || '0';
+                const excess = parseInt(excessStr) || 0;
+                totalExcess += excess;
+            });
+            
+            totalExcessEl.textContent = totalExcess;
+        }
+        
+        function updateLastLoadTime() {
+            if (lastLoadedTime) {
+                const timeStr = lastLoadedTime.toLocaleTimeString('ar-EG', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                const dateStr = lastLoadedTime.toLocaleDateString('ar-EG');
+                lastUpdateTime.innerHTML = `<i class="fas fa-clock"></i> ${dateStr} - ${timeStr}`;
+            }
+        }
+        
+        // ========== البحث عن الموظف ==========
+        function searchEmployee() {
+            const code = employeeCodeInput.value.trim();
+            
+            if (!code) {
+                showAlert('الرجاء إدخال كود الموظف', 'warning');
+                employeeCodeInput.focus();
+                return;
+            }
+            
+            if (!isConnected || employeesData.length === 0) {
+                showAlert('لا يوجد اتصال بملف البيانات', 'error');
+                return;
+            }
+            
+            showLoader('جاري البحث عن الموظف...');
+            
+            setTimeout(() => {
+                // البحث عن الموظف
+                const employee = employeesData.find(emp => {
+                    const empCode = emp['الكود'] ? emp['الكود'].toString().trim() : '';
+                    return empCode === code;
+                });
+                
+                hideLoader();
+                
+                if (employee) {
+                    displayEmployee(employee);
+                    
+                    // حفظ البحث الأخير
+                    localStorage.setItem('lastSearch', code);
+                } else {
+                    showAlert(`❌ لا يوجد موظف بالكود: ${code}`, 'error');
+                    
+                    employeeInfo.innerHTML = `
+                        <div class="placeholder-message">
+                            <i class="fas fa-user-slash"></i>
+                            <p>لم يتم العثور على موظف بالكود:</p>
+                            <p style="color: var(--primary-red); font-weight: bold; margin-top: 5px;">${code}</p>
+                        </div>
+                    `;
+                }
+            }, 500);
+        }
+        
+        function displayEmployee(employee) {
+            // تنظيف البيانات
+            const code = employee['الكود'] || 'غير متوفر';
+            const name = employee['الاسم'] || 'غير متوفر';
+            const discount = employee['نسبة الخصم'] || employee['نسبة_الخصم'] || '0%';
+            const excess = employee['عدد الاكسات'] || employee['عدد_الاكسات'] || '0';
+            
+            const employeeHTML = `
+                <div class="employee-details">
+                    <div class="detail-row">
+                        <div class="detail-label">
+                            <i class="fas fa-id-card"></i>
+                            الكود
+                        </div>
+                        <div class="detail-value">${code}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">
+                            <i class="fas fa-user"></i>
+                            الاسم
+                        </div>
+                        <div class="detail-value">${name}</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">
+                            <i class="fas fa-percentage"></i>
+                            نسبة الخصم
+                        </div>
+                        <div class="detail-value">
+                            <span class="discount-value">${discount}</span>
+                        </div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">
+                            <i class="fas fa-boxes"></i>
+                            عدد الأكسات
+                        </div>
+                        <div class="detail-value">
+                            <span class="excess-value">${excess}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            employeeInfo.innerHTML = employeeHTML;
+            
+            // إضافة تأثير للبطاقة
+            const resultCard = document.querySelector('.result-card');
+            resultCard.style.transform = 'scale(1.02)';
+            setTimeout(() => {
+                resultCard.style.transform = 'scale(1)';
+            }, 300);
+        }
+        
+        // ========== إضافة مستمعي الأحداث ==========
+        function setupEventListeners() {
+            searchBtn.addEventListener('click', searchEmployee);
+            
+            employeeCodeInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !searchBtn.disabled) {
+                    searchEmployee();
+                }
+            });
+            
+            alertBtn.addEventListener('click', hideAlert);
+            
+            refreshBtn.addEventListener('click', () => {
+                loadDataFromGoogleSheets();
+            });
+        }
+        
+        // ========== تهيئة التطبيق ==========
+        function initApp() {
+            // إعداد مستمعي الأحداث
+            setupEventListeners();
+            
+            // محاولة تحميل البيانات فوراً
+            loadDataFromGoogleSheets();
+            
+            // تحميل البحث الأخير إن وجد
+            const lastSearch = localStorage.getItem('lastSearch');
+            if (lastSearch) {
+                employeeCodeInput.value = lastSearch;
+            }
+            
+            // تحسين العرض على الشاشات الصغيرة
+            adjustForMobile();
+        }
+        
+        function adjustForMobile() {
+            // التحقق إذا كان الجهاز موبايل
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            
+            if (isMobile) {
+                // إضافة padding إضافي للشاشات الصغيرة
+                document.body.style.paddingBottom = '20px';
+                
+                // منع تكبير النص عند التركيز على input
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    input, textarea, select {
+                        font-size: 16px !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+        
+        // ========== بدء تشغيل التطبيق ==========
+        document.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>

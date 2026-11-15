@@ -1,0 +1,400 @@
+{
+  "entities": {
+    "Employee": {
+      "title": "Employee",
+      "description": "Factory employee X-Score record without PII",
+      "type": "object",
+      "properties": {
+        "serial": {
+          "type": "number",
+          "description": "Row serial number from roster"
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Employee factory code"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Employee full name"
+        },
+        "department": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Factory section or department"
+        },
+        "excessCount": {
+          "type": "number",
+          "description": "Total X-Score points accumulated"
+        },
+        "discountPercentage": {
+          "type": "number",
+          "description": "Monthly incentive deduction percentage (0 to 100)"
+        },
+        "recentLogs": {
+          "type": "array",
+          "description": "Bounded recent X-Score log entries (max 50)"
+        },
+        "assignedAdminKeys": {
+          "type": "array",
+          "description": "Bounded list of opaque admin keys authorized to manage this employee (max 15)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "serial",
+        "code",
+        "name",
+        "department",
+        "excessCount",
+        "discountPercentage",
+        "recentLogs",
+        "assignedAdminKeys",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StatsSummary": {
+      "title": "StatsSummary",
+      "description": "Aggregated factory-wide X-Score metrics",
+      "type": "object",
+      "properties": {
+        "totalEmployees": {
+          "type": "number"
+        },
+        "avgDiscount": {
+          "type": "number"
+        },
+        "totalExcess": {
+          "type": "number"
+        },
+        "employeesWithExcess": {
+          "type": "number"
+        },
+        "seedInitialized": {
+          "type": "boolean"
+        },
+        "cycleLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "totalEmployees",
+        "avgDiscount",
+        "totalExcess",
+        "employeesWithExcess",
+        "seedInitialized",
+        "cycleLabel",
+        "updatedAt"
+      ]
+    },
+    "DirectoryIndex": {
+      "title": "DirectoryIndex",
+      "description": "Compact roster index for admin pickers",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["items", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Sub-admin or assistant admin account record",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "enum": ["assistant_admin", "supervisor"]
+        },
+        "canAssignEmployees": {
+          "type": "boolean"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "assignedCount": {
+          "type": "number"
+        },
+        "createdByEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "email",
+        "displayName",
+        "role",
+        "canAssignEmployees",
+        "active",
+        "assignedCount",
+        "createdByEmail",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminAssignment": {
+      "title": "AdminAssignment",
+      "description": "Subcollection link granting an admin access to a specific employee",
+      "type": "object",
+      "properties": {
+        "employeeId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "employeeCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "employeeName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "assignedByUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "employeeId",
+        "employeeCode",
+        "employeeName",
+        "assignedByUid",
+        "createdAt"
+      ]
+    },
+    "UserAdminLink": {
+      "title": "UserAdminLink",
+      "description": "Verified mapping from Firebase Auth UID to AdminRecord key",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "adminKey": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "adminKey", "email", "createdAt", "updatedAt"]
+    },
+    "XScoreLog": {
+      "title": "XScoreLog",
+      "description": "Audit log of X-Score changes",
+      "type": "object",
+      "properties": {
+        "employeeId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "employeeCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "employeeName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "delta": {
+          "type": "number"
+        },
+        "previousExcess": {
+          "type": "number"
+        },
+        "newExcess": {
+          "type": "number"
+        },
+        "previousDiscount": {
+          "type": "number"
+        },
+        "newDiscount": {
+          "type": "number"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "dateLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "recordedByUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "recordedByName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "recordedByRole": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "employeeId",
+        "employeeCode",
+        "employeeName",
+        "delta",
+        "previousExcess",
+        "newExcess",
+        "previousDiscount",
+        "newDiscount",
+        "reason",
+        "category",
+        "dateLabel",
+        "recordedByUid",
+        "recordedByName",
+        "recordedByRole",
+        "createdAt"
+      ]
+    },
+    "MonthlyArchive": {
+      "title": "MonthlyArchive",
+      "description": "Closed monthly X-Score incentive and penalty snapshot",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "totalEmployees": {
+          "type": "number"
+        },
+        "penalizedEmployees": {
+          "type": "number"
+        },
+        "totalExcess": {
+          "type": "number"
+        },
+        "avgDiscount": {
+          "type": "number"
+        },
+        "records": {
+          "type": "array"
+        },
+        "closedByUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "closedByName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "title",
+        "totalEmployees",
+        "penalizedEmployees",
+        "totalExcess",
+        "avgDiscount",
+        "records",
+        "closedByUid",
+        "closedByName",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Individual employee X-Score records"
+    },
+    "/stats/{statId}": {
+      "schema": { "$ref": "#/entities/StatsSummary" },
+      "description": "Factory-wide aggregate statistics summary"
+    },
+    "/directory/{docId}": {
+      "schema": { "$ref": "#/entities/DirectoryIndex" },
+      "description": "Compact directory and assignment index for admins"
+    },
+    "/admins/{adminKey}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Authorized sub-admins and assistant admins"
+    },
+    "/admins/{adminKey}/assignedEmployees/{employeeId}": {
+      "schema": { "$ref": "#/entities/AdminAssignment" },
+      "description": "Employees assigned to a specific sub-admin"
+    },
+    "/user_admin_links/{uid}": {
+      "schema": { "$ref": "#/entities/UserAdminLink" },
+      "description": "Verified mapping from auth UID to admin record"
+    },
+    "/xscore_logs/{logId}": {
+      "schema": { "$ref": "#/entities/XScoreLog" },
+      "description": "Audit trail of all X-Score additions and adjustments"
+    },
+    "/monthly_archives/{archiveId}": {
+      "schema": { "$ref": "#/entities/MonthlyArchive" },
+      "description": "Monthly closing incentive/penalty snapshots"
+    }
+  }
+}
