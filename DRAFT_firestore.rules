@@ -57,9 +57,12 @@ service cloud.firestore {
         && linkedAdminData().email == request.auth.token.email;
     }
 
+    function isActiveAssistantAdminRole() {
+      return isActiveAdmin() && linkedAdminData().role == 'assistant_admin';
+    }
+
     function isActiveAssistantAdmin() {
-      return isActiveAdmin()
-        && linkedAdminData().role == 'assistant_admin'
+      return isActiveAssistantAdminRole()
         && linkedAdminData().canAssignEmployees == true;
     }
 
@@ -224,7 +227,7 @@ service cloud.firestore {
         && isValidEmployee(incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
-        && isSuperAdmin();
+        && (isSuperAdmin() || isActiveAssistantAdminRole());
 
       allow update: if isValidId(employeeId)
         && isValidEmployee(incoming())
@@ -261,7 +264,7 @@ service cloud.firestore {
           isSuperAdmin()
           || (
             isActiveAdmin()
-            && incoming().diff(existing()).affectedKeys().hasOnly(['avgDiscount', 'totalExcess', 'employeesWithExcess', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['totalEmployees', 'avgDiscount', 'totalExcess', 'employeesWithExcess', 'updatedAt'])
           )
         );
 
@@ -275,7 +278,7 @@ service cloud.firestore {
       allow create: if isValidId(docId)
         && isValidDirectoryIndex(incoming())
         && incoming().updatedAt == request.time
-        && isSuperAdmin();
+        && (isSuperAdmin() || isActiveAssistantAdminRole());
 
       allow update: if isValidId(docId)
         && isValidDirectoryIndex(incoming())

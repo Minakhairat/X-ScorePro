@@ -118,8 +118,12 @@ export function AdminConsoleView({
         type: 'success',
         text: editingEmp ? 'تم تحديث بيانات الموظف بنجاح.' : 'تم إضافة الموظف الجديد إلى Firebase.'
       });
-    } catch {
-      setFeedback({ type: 'error', text: 'تعذر حفظ بيانات الموظف.' });
+    } catch (err) {
+      if (err instanceof Error && err.message === 'DUPLICATE_CODE') {
+        setFeedback({ type: 'error', text: 'يوجد موظف مسجل بنفس الكود بالفعل.' });
+      } else {
+        setFeedback({ type: 'error', text: 'تعذر حفظ بيانات الموظف.' });
+      }
     } finally {
       setBusyAction(null);
     }
@@ -235,17 +239,19 @@ export function AdminConsoleView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {(isSuperAdmin || session.role === 'assistant_admin') && (
+            <button
+              type="button"
+              onClick={openNewEmployeeModal}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 text-white text-xs sm:text-sm font-semibold hover:bg-red-700 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>إضافة موظف</span>
+            </button>
+          )}
+
           {isSuperAdmin && (
             <>
-              <button
-                type="button"
-                onClick={openNewEmployeeModal}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 text-white text-xs sm:text-sm font-semibold hover:bg-red-700 transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>إضافة موظف</span>
-              </button>
-
               <button
                 type="button"
                 onClick={() => setArchiveModalOpen(true)}

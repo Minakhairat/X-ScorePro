@@ -535,6 +535,19 @@ export async function createOrUpdateEmployee(params: {
   const newId = makeEmployeeDocId(trimmedCode, nextSerial);
   const path = `employees/${newId}`;
 
+  // Check if an employee with this code already exists
+  try {
+    const existingSnap = await getDoc(doc(db, 'employees', newId));
+    if (existingSnap.exists()) {
+      throw new Error('DUPLICATE_CODE');
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'DUPLICATE_CODE') {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+
   const newEmployee: Employee = {
     id: newId,
     serial: nextSerial,
@@ -560,27 +573,56 @@ export async function createOrUpdateEmployee(params: {
   const updatedItems = [...dirItems, newDirItem];
   const stats = computeSummaryFromItems(updatedItems);
 
+  const [dirSnap, statsSnap] = await Promise.all([
+    getDoc(doc(db, 'directory', 'employees_index')),
+    getDoc(doc(db, 'stats', 'summary'))
+  ]);
+
   const batch = writeBatch(db);
   batch.set(doc(db, 'employees', newId), {
-    ...newEmployee,
+    serial: nextSerial,
+    code: trimmedCode,
+    name: trimmedName,
+    department: trimmedDept,
+    excessCount: 0,
+    discountPercentage: 0,
+    recentLogs: [],
+    assignedAdminKeys: [],
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
-  batch.set(
-    doc(db, 'directory', 'employees_index'),
-    {
+
+  if (dirSnap.exists()) {
+    batch.update(doc(db, 'directory', 'employees_index'), {
       items: updatedItems,
       updatedAt: serverTimestamp()
-    },
-    { merge: true }
-  );
-  batch.update(doc(db, 'stats', 'summary'), {
-    totalEmployees: stats.totalEmployees,
-    avgDiscount: stats.avgDiscount,
-    totalExcess: stats.totalExcess,
-    employeesWithExcess: stats.employeesWithExcess,
-    updatedAt: serverTimestamp()
-  });
+    });
+  } else {
+    batch.set(doc(db, 'directory', 'employees_index'), {
+      items: updatedItems,
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  if (statsSnap.exists()) {
+    batch.update(doc(db, 'stats', 'summary'), {
+      totalEmployees: stats.totalEmployees,
+      avgDiscount: stats.avgDiscount,
+      totalExcess: stats.totalExcess,
+      employeesWithExcess: stats.employeesWithExcess,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    batch.set(doc(db, 'stats', 'summary'), {
+      totalEmployees: stats.totalEmployees,
+      avgDiscount: stats.avgDiscount,
+      totalExcess: stats.totalExcess,
+      employeesWithExcess: stats.employeesWithExcess,
+      seedInitialized: true,
+      cycleLabel: 'الدورة الحالية',
+      updatedAt: serverTimestamp()
+    });
+  }
 
   try {
     await batch.commit();
