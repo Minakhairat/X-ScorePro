@@ -265,8 +265,9 @@ export function AdminManagementView({
           إدارة المشرفين وتحديد الأفراد المسؤولين عنهم
         </h1>
         <p className="mt-1.5 text-sm text-slate-600">
-          يمكن للأدمن الرئيسي إضافة المشرفين والأدمن المساعدين، كما يمكن للأدمن الرئيسي والأدمن
-          المساعد اختيار الأفراد المحددين الذين يتحكم كل مشرف في تسجيل الـ X-Score لهم.
+          يمكن للأدمن الرئيسي إضافة المشرفين والأدمن المساعدين، وتحديد الأفراد المعينين لكل مشرف
+          محدد. أما الأدمن المساعد فيحصل تلقائياً على صلاحية كاملة على جميع الموظفين مع إمكانية إضافة
+          موظفين جدد.
         </p>
       </div>
 
@@ -352,7 +353,7 @@ export function AdminManagementView({
                 className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-sm focus:border-red-600 focus:outline-none"
               >
                 <option value="supervisor">مشرف محدد (يتحكم في أفراد معينين)</option>
-                <option value="assistant_admin">أدمن مساعد (يسجل ويوزع الأفراد)</option>
+                <option value="assistant_admin">أدمن مساعد (كل الموظفين + إضافة موظفين)</option>
               </select>
             </div>
 
@@ -418,27 +419,40 @@ export function AdminManagementView({
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     {item.email && <span dir="ltr">{item.email}</span>}
                     {item.email && <span aria-hidden="true">·</span>}
-                    <span className="font-mono font-semibold text-slate-700 tabular-nums">
-                      الأفراد المعينون: {item.assignedCount} موظف
-                    </span>
+                    {item.role === 'assistant_admin' ? (
+                      <span className="font-semibold text-emerald-700">
+                        النطاق: جميع الموظفين (تلقائياً)
+                      </span>
+                    ) : (
+                      <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                        الأفراد المعينون: {item.assignedCount} موظف
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openEmployeePicker({
-                        adminKey: item.adminKey,
-                        displayName: item.displayName,
-                        role: item.role
-                      })
-                    }
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors cursor-pointer whitespace-nowrap"
-                  >
-                    <Users className="w-3.5 h-3.5" />
-                    <span>اختيار الأفراد ({item.assignedCount})</span>
-                  </button>
+                  {item.role === 'supervisor' ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openEmployeePicker({
+                          adminKey: item.adminKey,
+                          displayName: item.displayName,
+                          role: item.role
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>اختيار الأفراد ({item.assignedCount})</span>
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold whitespace-nowrap">
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>صلاحية شاملة لجميع الموظفين</span>
+                    </span>
+                  )}
 
                   {isSuperAdmin && item.record && (
                     <>

@@ -240,8 +240,20 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly(['assignedAdminKeys', 'updatedAt'])
           )
           || (
-            (isAssignedToEmployee(employeeId) || isActiveAssistantAdmin())
+            (isAssignedToEmployee(employeeId) || isActiveAssistantAdminRole())
             && incoming().diff(existing()).affectedKeys().hasOnly(['excessCount', 'discountPercentage', 'recentLogs', 'updatedAt'])
+          )
+          || (
+            isActiveAssistantAdminRole()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['department', 'updatedAt'])
+          )
+          || (
+            isActiveAssistantAdminRole()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'updatedAt'])
+          )
+          || (
+            isActiveAssistantAdminRole()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'excessCount', 'discountPercentage', 'updatedAt'])
           )
         );
 
@@ -263,6 +275,10 @@ service cloud.firestore {
         && (
           isSuperAdmin()
           || (
+            isActiveAssistantAdminRole()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['totalEmployees', 'avgDiscount', 'totalExcess', 'employeesWithExcess', 'seedInitialized', 'updatedAt'])
+          )
+          || (
             isActiveAdmin()
             && incoming().diff(existing()).affectedKeys().hasOnly(['totalEmployees', 'avgDiscount', 'totalExcess', 'employeesWithExcess', 'updatedAt'])
           )
@@ -278,7 +294,10 @@ service cloud.firestore {
       allow create: if isValidId(docId)
         && isValidDirectoryIndex(incoming())
         && incoming().updatedAt == request.time
-        && (isSuperAdmin() || isActiveAssistantAdminRole());
+        && (
+          isSuperAdmin()
+          || (docId != 'departments' && isActiveAssistantAdminRole())
+        );
 
       allow update: if isValidId(docId)
         && isValidDirectoryIndex(incoming())
@@ -286,7 +305,8 @@ service cloud.firestore {
         && (
           isSuperAdmin()
           || (
-            isActiveAdmin()
+            docId != 'departments'
+            && isActiveAdmin()
             && incoming().diff(existing()).affectedKeys().hasOnly(['items', 'updatedAt'])
           )
         );
@@ -391,7 +411,7 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
         && (
           isSuperAdmin()
-          || isActiveAssistantAdmin()
+          || isActiveAssistantAdminRole()
           || isAssignedToEmployee(incoming().employeeId)
         );
 

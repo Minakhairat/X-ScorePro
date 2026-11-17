@@ -14,16 +14,19 @@ import {
   where,
   writeBatch
 } from 'firebase/firestore';
-import { INITIAL_EMPLOYEES_FROM_EXCEL } from '../data/initialEmployees';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import {
   calculateDiscountFromExcess,
+  DEFAULT_DEPARTMENTS,
   SUPER_ADMIN_EMAIL,
   type AdminAssignmentDirectoryItem,
   type AdminRecord,
   type AdminSession,
+  type DepartmentItem,
   type DirectoryEmployeeItem,
   type Employee,
+  type ExcelEmployeeImportRow,
+  type FullAppBackupPayload,
   type MonthlyArchiveRecord,
   type StatsSummary,
   type XScoreAuditLog,
@@ -31,7 +34,8 @@ import {
 } from '../types/xscore';
 
 function sanitizeId(raw: string): string {
-  return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  return cleaned || 'item';
 }
 
 export function makeEmployeeDocId(code: string, serial: number): string {
@@ -86,7 +90,7 @@ export async function fetchStatsSummary(): Promise<StatsSummary | null> {
 
 export async function lookupEmployeeByCode(codeInput: string): Promise<{
   employee: Employee | null;
-  source: 'firestore' | 'seed-fallback';
+  source: 'firestore';
 }> {
   const code = codeInput.trim();
   if (!code) return { employee: null, source: 'firestore' };
@@ -101,41 +105,74 @@ export async function lookupEmployeeByCode(codeInput: string): Promise<{
         source: 'firestore'
       };
     }
-
-    // Check if Firestore has been seeded yet; if not, allow read-only fallback from bundled Excel data
-    const statsSnap = await getDoc(doc(db, 'stats', 'summary'));
-    if (!statsSnap.exists() || !(statsSnap.data() as StatsSummary).seedInitialized) {
-      const match = INITIAL_EMPLOYEES_FROM_EXCEL.find((e) => e.code.trim() === code);
-      if (match) {
-        return {
-          employee: {
-            id: match.id,
-            serial: match.serial,
-            code: match.code,
-            name: match.name,
-            department: 'عام',
-            excessCount: match.excessCount,
-            discountPercentage: match.discountPercentage,
-            recentLogs: match.recentLogs,
-            assignedAdminKeys: []
-          },
-          source: 'seed-fallback'
-        };
-      }
-    }
     return { employee: null, source: 'firestore' };
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
-export function getSeedFallbackSummary(): StatsSummary {
-  const stats = computeSummaryFromItems(INITIAL_EMPLOYEES_FROM_EXCEL);
+export function getEmptySummary(): StatsSummary {
   return {
-    ...stats,
+    totalEmployees: 0,
+    avgDiscount: 0,
+    totalExcess: 0,
+    employeesWithExcess: 0,
     seedInitialized: false,
-    cycleLabel: 'بيانات الإكسيل المبدئية (بانتظار تهيئة المدير)'
+    cycleLabel: 'بانتظار رفع ملف الإكسيل أو تسجيل الموظفين يدوياً'
   };
+}
+
+// ========== Departments / Production Lines (Super Admin Managed) ==========
+
+export function getDefaultDepartmentItems(): DepartmentItem[] {
+  return DEFAULT_DEPARTMENTS.map((name, idx) => ({
+    id: `dept_${idx + 1}`,
+    name
+  }));
+}
+
+export async function fetchDepartments(): Promise<DepartmentItem[]> {
+  const path = 'directory/departments';
+  try {
+    const snap = await getDoc(doc(db, 'directory', 'departments'));
+    if (!snap.exists()) {
+      return getDefaultDepartmentItems();
+    }
+    const rawItems = (snap.data().items || []) as DepartmentItem[];
+    if (rawItems.length === 0) return getDefaultDepartmentItems();
+    return rawItems;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export async function saveDepartments(items: DepartmentItem[]): Promise<DepartmentItem[]> {
+  const path = 'directory/departments';
+  const seen = new Set<string>();
+  const cleaned: DepartmentItem[] = [];
+
+  for (const item of items) {
+    const name = item.name.trim().slice(0, 80);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    cleaned.push({
+      id: sanitizeId(item.id || `dept_${cleaned.length + 1}`),
+      name
+    });
+  }
+
+  const finalItems = cleaned.length > 0 ? cleaned.slice(0, 200) : getDefaultDepartmentItems();
+
+  try {
+    await setDoc(doc(db, 'directory', 'departments'), {
+      items: finalItems,
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+
+  return finalItems;
 }
 
 // ========== Admin Session & Auth Resolution ==========
@@ -217,20 +254,22 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
     handleFirestoreError(error, OperationType.WRITE, linkPath);
   }
 
-  // Fetch assigned employee IDs from directory/admin_assignments
+  // Assistant admins have access to all employees automatically without individual assignments
   let assignedEmployeeIds: string[] = [];
-  const dirPath = 'directory/admin_assignments';
-  try {
-    const dirSnap = await getDoc(doc(db, 'directory', 'admin_assignments'));
-    if (dirSnap.exists()) {
-      const items = (dirSnap.data().items || []) as AdminAssignmentDirectoryItem[];
-      const myEntry = items.find((item) => item.id === adminDocId);
-      if (myEntry) {
-        assignedEmployeeIds = myEntry.assignedEmployeeIds || [];
+  if (adminData.role === 'supervisor') {
+    const dirPath = 'directory/admin_assignments';
+    try {
+      const dirSnap = await getDoc(doc(db, 'directory', 'admin_assignments'));
+      if (dirSnap.exists()) {
+        const items = (dirSnap.data().items || []) as AdminAssignmentDirectoryItem[];
+        const myEntry = items.find((item) => item.id === adminDocId);
+        if (myEntry) {
+          assignedEmployeeIds = myEntry.assignedEmployeeIds || [];
+        }
       }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, dirPath);
     }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, dirPath);
   }
 
   return {
@@ -238,82 +277,10 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
     adminKey: adminDocId,
     displayName: adminData.displayName || user.displayName || email,
     email,
-    canAssignEmployees: adminData.canAssignEmployees,
+    canAssignEmployees: adminData.role === 'supervisor' ? false : adminData.canAssignEmployees,
     active: adminData.active,
     assignedEmployeeIds
   };
-}
-
-// ========== Super Admin Seeding from Excel Data ==========
-
-export async function seedExcelEmployeesToFirestore(
-  cycleLabel = 'الدورة الحالية'
-): Promise<StatsSummary> {
-  const items: DirectoryEmployeeItem[] = INITIAL_EMPLOYEES_FROM_EXCEL.map((e) => ({
-    id: e.id,
-    serial: e.serial,
-    code: e.code,
-    name: e.name.slice(0, 120),
-    department: 'عام',
-    excessCount: e.excessCount,
-    discountPercentage: e.discountPercentage
-  }));
-
-  // Chunk writes into batches of 400 (Firestore batch limit is 500)
-  const chunkSize = 400;
-  for (let i = 0; i < INITIAL_EMPLOYEES_FROM_EXCEL.length; i += chunkSize) {
-    const chunk = INITIAL_EMPLOYEES_FROM_EXCEL.slice(i, i + chunkSize);
-    const batch = writeBatch(db);
-    for (const emp of chunk) {
-      const empRef = doc(db, 'employees', emp.id);
-      batch.set(empRef, {
-        serial: emp.serial,
-        code: emp.code.slice(0, 32),
-        name: emp.name.slice(0, 120),
-        department: 'عام',
-        excessCount: emp.excessCount,
-        discountPercentage: emp.discountPercentage,
-        recentLogs: emp.recentLogs.slice(0, 50),
-        assignedAdminKeys: [],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    }
-    try {
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'employees');
-    }
-  }
-
-  const computed = computeSummaryFromItems(items);
-  const summary: StatsSummary = {
-    ...computed,
-    seedInitialized: true,
-    cycleLabel: cycleLabel.slice(0, 60),
-    updatedAt: serverTimestamp()
-  };
-
-  try {
-    const metaBatch = writeBatch(db);
-    metaBatch.set(doc(db, 'directory', 'employees_index'), {
-      items,
-      updatedAt: serverTimestamp()
-    });
-    const assignSnap = await getDoc(doc(db, 'directory', 'admin_assignments'));
-    if (!assignSnap.exists()) {
-      metaBatch.set(doc(db, 'directory', 'admin_assignments'), {
-        items: [],
-        updatedAt: serverTimestamp()
-      });
-    }
-    metaBatch.set(doc(db, 'stats', 'summary'), summary);
-    await metaBatch.commit();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'stats/summary');
-  }
-
-  return summary;
 }
 
 // ========== Fetching Employees for Admin Views ==========
@@ -337,7 +304,8 @@ export async function fetchDirectoryEmployeesIndex(): Promise<DirectoryEmployeeI
   try {
     const snap = await getDoc(doc(db, 'directory', 'employees_index'));
     if (!snap.exists()) return [];
-    return (snap.data().items || []) as DirectoryEmployeeItem[];
+    const items = (snap.data().items || []) as DirectoryEmployeeItem[];
+    return [...items].sort((a, b) => a.serial - b.serial);
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
   }
@@ -346,7 +314,6 @@ export async function fetchDirectoryEmployeesIndex(): Promise<DirectoryEmployeeI
 export async function fetchAssignedEmployeesByIds(employeeIds: string[]): Promise<Employee[]> {
   if (employeeIds.length === 0) return [];
   const results: Employee[] = [];
-  // Fetch individually using allowed single-doc get
   const promises = employeeIds.map(async (empId) => {
     const path = `employees/${empId}`;
     try {
@@ -406,7 +373,6 @@ export async function recordEmployeeXScore(params: {
 
   const updatedLogs = [entry, ...(employee.recentLogs || [])].slice(0, 50);
 
-  // Fetch directory index so we can atomically keep directory & summary accurate
   const dirItems = await fetchDirectoryEmployeesIndex();
   const updatedItems = dirItems.map((item) =>
     item.id === employee.id
@@ -417,7 +383,6 @@ export async function recordEmployeeXScore(params: {
 
   const batch = writeBatch(db);
 
-  // 1. Update employee doc (strictly only allowed keys for sub-admin compatibility)
   batch.update(doc(db, 'employees', employee.id), {
     excessCount: newExcess,
     discountPercentage: newDiscount,
@@ -425,7 +390,6 @@ export async function recordEmployeeXScore(params: {
     updatedAt: serverTimestamp()
   });
 
-  // 2. Create audit log entry
   batch.set(doc(db, 'xscore_logs', logId), {
     employeeId: employee.id,
     employeeCode: employee.code.slice(0, 32),
@@ -444,7 +408,6 @@ export async function recordEmployeeXScore(params: {
     createdAt: serverTimestamp()
   });
 
-  // 3. Update directory index
   if (dirItems.length > 0) {
     batch.update(doc(db, 'directory', 'employees_index'), {
       items: updatedItems,
@@ -452,7 +415,6 @@ export async function recordEmployeeXScore(params: {
     });
   }
 
-  // 4. Update stats/summary (only allowed keys for sub-admins)
   batch.update(doc(db, 'stats', 'summary'), {
     avgDiscount: stats.avgDiscount,
     totalExcess: stats.totalExcess,
@@ -483,7 +445,50 @@ export async function recordEmployeeXScore(params: {
   };
 }
 
-// ========== Super Admin Employee CRUD ==========
+// ========== Employee CRUD & Department Selection ==========
+
+export async function updateEmployeeDepartment(
+  employeeId: string,
+  department: string
+): Promise<string> {
+  const trimmedDept = (department.trim() || 'عام').slice(0, 80);
+  const path = `employees/${employeeId}`;
+
+  const [dirItems, dirSnap] = await Promise.all([
+    fetchDirectoryEmployeesIndex(),
+    getDoc(doc(db, 'directory', 'employees_index'))
+  ]);
+
+  const updatedItems = dirItems.map((item) =>
+    item.id === employeeId ? { ...item, department: trimmedDept } : item
+  );
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'employees', employeeId), {
+    department: trimmedDept,
+    updatedAt: serverTimestamp()
+  });
+
+  if (dirSnap.exists()) {
+    batch.update(doc(db, 'directory', 'employees_index'), {
+      items: updatedItems,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    batch.set(doc(db, 'directory', 'employees_index'), {
+      items: updatedItems,
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+
+  return trimmedDept;
+}
 
 export async function createOrUpdateEmployee(params: {
   existingEmployee?: Employee;
@@ -491,8 +496,9 @@ export async function createOrUpdateEmployee(params: {
   name: string;
   department: string;
   serial?: number;
+  isSuperAdmin?: boolean;
 }): Promise<Employee> {
-  const { existingEmployee, code, name, department, serial } = params;
+  const { existingEmployee, code, name, department, serial, isSuperAdmin = false } = params;
   const trimmedCode = code.trim().slice(0, 32);
   const trimmedName = name.trim().slice(0, 120);
   const trimmedDept = (department.trim() || 'عام').slice(0, 80);
@@ -503,16 +509,29 @@ export async function createOrUpdateEmployee(params: {
     const path = `employees/${existingEmployee.id}`;
     const updatedItems = dirItems.map((item) =>
       item.id === existingEmployee.id
-        ? { ...item, code: trimmedCode, name: trimmedName, department: trimmedDept }
+        ? {
+            ...item,
+            code: isSuperAdmin ? trimmedCode : item.code,
+            name: trimmedName,
+            department: trimmedDept
+          }
         : item
     );
     const batch = writeBatch(db);
-    batch.update(doc(db, 'employees', existingEmployee.id), {
-      code: trimmedCode,
-      name: trimmedName,
-      department: trimmedDept,
-      updatedAt: serverTimestamp()
-    });
+    if (isSuperAdmin) {
+      batch.update(doc(db, 'employees', existingEmployee.id), {
+        code: trimmedCode,
+        name: trimmedName,
+        department: trimmedDept,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      batch.update(doc(db, 'employees', existingEmployee.id), {
+        name: trimmedName,
+        department: trimmedDept,
+        updatedAt: serverTimestamp()
+      });
+    }
     batch.update(doc(db, 'directory', 'employees_index'), {
       items: updatedItems,
       updatedAt: serverTimestamp()
@@ -524,18 +543,17 @@ export async function createOrUpdateEmployee(params: {
     }
     return {
       ...existingEmployee,
-      code: trimmedCode,
+      code: isSuperAdmin ? trimmedCode : existingEmployee.code,
       name: trimmedName,
       department: trimmedDept
     };
   }
 
   const nextSerial =
-    serial || (dirItems.reduce((max, item) => Math.max(max, item.serial), 0) + 1);
+    serial || dirItems.reduce((max, item) => Math.max(max, item.serial), 0) + 1;
   const newId = makeEmployeeDocId(trimmedCode, nextSerial);
   const path = `employees/${newId}`;
 
-  // Check if an employee with this code already exists
   try {
     const existingSnap = await getDoc(doc(db, 'employees', newId));
     if (existingSnap.exists()) {
@@ -610,6 +628,7 @@ export async function createOrUpdateEmployee(params: {
       avgDiscount: stats.avgDiscount,
       totalExcess: stats.totalExcess,
       employeesWithExcess: stats.employeesWithExcess,
+      seedInitialized: true,
       updatedAt: serverTimestamp()
     });
   } else {
@@ -631,6 +650,212 @@ export async function createOrUpdateEmployee(params: {
   }
 
   return newEmployee;
+}
+
+export async function importEmployeesFromExcelRows(params: {
+  rows: ExcelEmployeeImportRow[];
+  mode: 'merge' | 'add_new_only';
+  cycleLabel?: string;
+}): Promise<{ createdCount: number; updatedCount: number; skippedCount: number; summary: StatsSummary }> {
+  const { rows, mode, cycleLabel = 'الدورة الحالية' } = params;
+
+  const [existingDirItems, dirSnap, statsSnap, assignSnap] = await Promise.all([
+    fetchDirectoryEmployeesIndex(),
+    getDoc(doc(db, 'directory', 'employees_index')),
+    getDoc(doc(db, 'stats', 'summary')),
+    getDoc(doc(db, 'directory', 'admin_assignments'))
+  ]);
+
+  const itemMap = new Map<string, DirectoryEmployeeItem>();
+  let maxSerial = 0;
+  for (const item of existingDirItems) {
+    itemMap.set(item.id, item);
+    if (item.serial > maxSerial) maxSerial = item.serial;
+  }
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  // Deduplicate incoming rows by target empId so each doc is written once per import
+  const pendingWrites = new Map<
+    string,
+    {
+      isUpdate: boolean;
+      serial: number;
+      code: string;
+      name: string;
+      department: string;
+      excessCount: number;
+      discountPercentage: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const cleanName = row.name.trim().slice(0, 120);
+    if (!cleanName) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const cleanCode = row.code.trim().slice(0, 32);
+    const cleanDept = (row.department.trim() || 'عام').slice(0, 80);
+    const cleanExcess = Math.max(0, Math.min(100000, Math.round(Number(row.excessCount) || 0)));
+    const cleanDiscount = Math.max(
+      0,
+      Math.min(100, Math.round(Number(row.discountPercentage) ?? calculateDiscountFromExcess(cleanExcess)))
+    );
+
+    const candidateSerial =
+      row.serial && row.serial > 0 ? Math.round(row.serial) : maxSerial + 1;
+    const empId = makeEmployeeDocId(cleanCode, candidateSerial);
+    const existing = itemMap.get(empId);
+
+    if (existing && mode === 'add_new_only') {
+      skippedCount += 1;
+      continue;
+    }
+
+    let assignedSerial = existing ? existing.serial : candidateSerial;
+    if (!existing) {
+      if (!row.serial || row.serial <= 0) {
+        maxSerial += 1;
+        assignedSerial = maxSerial;
+      } else if (row.serial > maxSerial) {
+        maxSerial = row.serial;
+      }
+    }
+
+    itemMap.set(empId, {
+      id: empId,
+      serial: assignedSerial,
+      code: existing ? existing.code : cleanCode,
+      name: cleanName,
+      department: cleanDept,
+      excessCount: cleanExcess,
+      discountPercentage: cleanDiscount
+    });
+
+    pendingWrites.set(empId, {
+      isUpdate: Boolean(existing),
+      serial: assignedSerial,
+      code: existing ? existing.code : cleanCode,
+      name: cleanName,
+      department: cleanDept,
+      excessCount: cleanExcess,
+      discountPercentage: cleanDiscount
+    });
+  }
+
+  const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+  for (const [empId, entry] of pendingWrites.entries()) {
+    if (entry.isUpdate) {
+      updatedCount += 1;
+      operations.push((batch) =>
+        batch.update(doc(db, 'employees', empId), {
+          name: entry.name,
+          department: entry.department,
+          excessCount: entry.excessCount,
+          discountPercentage: entry.discountPercentage,
+          updatedAt: serverTimestamp()
+        })
+      );
+    } else {
+      createdCount += 1;
+      operations.push((batch) =>
+        batch.set(doc(db, 'employees', empId), {
+          serial: entry.serial,
+          code: entry.code,
+          name: entry.name,
+          department: entry.department,
+          excessCount: entry.excessCount,
+          discountPercentage: entry.discountPercentage,
+          recentLogs: [],
+          assignedAdminKeys: [],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        })
+      );
+    }
+  }
+
+  const finalItems = Array.from(itemMap.values())
+    .sort((a, b) => a.serial - b.serial)
+    .slice(0, 2000);
+
+  const computed = computeSummaryFromItems(finalItems);
+  const nextCycleLabel =
+    (statsSnap.exists() ? (statsSnap.data() as StatsSummary).cycleLabel : cycleLabel).slice(0, 60) ||
+    'الدورة الحالية';
+
+  operations.push((batch) => {
+    if (dirSnap.exists()) {
+      batch.update(doc(db, 'directory', 'employees_index'), {
+        items: finalItems,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      batch.set(doc(db, 'directory', 'employees_index'), {
+        items: finalItems,
+        updatedAt: serverTimestamp()
+      });
+    }
+  });
+
+  if (!assignSnap.exists()) {
+    operations.push((batch) =>
+      batch.set(doc(db, 'directory', 'admin_assignments'), {
+        items: [],
+        updatedAt: serverTimestamp()
+      })
+    );
+  }
+
+  operations.push((batch) => {
+    if (statsSnap.exists()) {
+      batch.update(doc(db, 'stats', 'summary'), {
+        totalEmployees: computed.totalEmployees,
+        avgDiscount: computed.avgDiscount,
+        totalExcess: computed.totalExcess,
+        employeesWithExcess: computed.employeesWithExcess,
+        seedInitialized: true,
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      batch.set(doc(db, 'stats', 'summary'), {
+        ...computed,
+        seedInitialized: true,
+        cycleLabel: nextCycleLabel,
+        updatedAt: serverTimestamp()
+      });
+    }
+  });
+
+  const chunkSize = 350;
+  try {
+    for (let i = 0; i < operations.length; i += chunkSize) {
+      const batch = writeBatch(db);
+      const slice = operations.slice(i, i + chunkSize);
+      for (const op of slice) {
+        op(batch);
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'employees');
+  }
+
+  return {
+    createdCount,
+    updatedCount,
+    skippedCount,
+    summary: {
+      ...computed,
+      seedInitialized: true,
+      cycleLabel: nextCycleLabel
+    }
+  };
 }
 
 export async function deleteEmployeeRecord(employeeId: string): Promise<void> {
@@ -793,7 +1018,6 @@ export async function deleteSubAdmin(adminKey: string): Promise<void> {
   const target = existingAssignments.find((a) => a.id === adminKey);
   const updatedAssignments = existingAssignments.filter((a) => a.id !== adminKey);
 
-  // Clean up subcollection entries first
   if (target && target.assignedEmployeeIds.length > 0) {
     const batch = writeBatch(db);
     for (const empId of target.assignedEmployeeIds) {
@@ -831,7 +1055,6 @@ export async function saveAdminEmployeeAssignments(params: {
   const toAdd = selectedEmployees.filter((e) => !prevSet.has(e.id));
   const toRemoveIds = previousEmployeeIds.filter((id) => !nextSet.has(id));
 
-  // Fetch current directory/admin_assignments
   const dirAssignments = await fetchAdminAssignmentsDirectory();
   const updatedDirAssignments = dirAssignments.map((item) =>
     item.id === targetAdminKey ? { ...item, assignedEmployeeIds: nextIds } : item
@@ -895,11 +1118,11 @@ export async function fetchXScoreLogs(params: {
   const path = 'xscore_logs';
   try {
     const q = params.isSuperAdmin
-      ? query(collection(db, 'xscore_logs'), orderBy('createdAt', 'desc'), limit(100))
+      ? query(collection(db, 'xscore_logs'), orderBy('createdAt', 'desc'), limit(200))
       : query(
           collection(db, 'xscore_logs'),
           where('recordedByUid', '==', params.uid),
-          limit(100)
+          limit(200)
         );
     const snap = await getDocs(q);
     const list = snap.docs.map((d) => ({
@@ -919,7 +1142,7 @@ export async function fetchXScoreLogs(params: {
 export async function fetchMonthlyArchives(): Promise<MonthlyArchiveRecord[]> {
   const path = 'monthly_archives';
   try {
-    const q = query(collection(db, 'monthly_archives'), orderBy('createdAt', 'desc'), limit(24));
+    const q = query(collection(db, 'monthly_archives'), orderBy('createdAt', 'desc'), limit(50));
     const snap = await getDocs(q);
     return snap.docs.map((d) => ({
       id: d.id,
@@ -1015,4 +1238,397 @@ export async function closeMonthlyCycleAndArchive(params: {
       handleFirestoreError(error, OperationType.WRITE, 'stats/summary');
     }
   }
+}
+
+// ========== Full App JSON Export & Import (Super Admin Only) ==========
+
+export async function exportFullAppBackup(): Promise<FullAppBackupPayload> {
+  const [stats, departments, employees, admins, assignmentsDir, xscoreLogs, monthlyArchives] =
+    await Promise.all([
+      fetchStatsSummary(),
+      fetchDepartments(),
+      fetchAllEmployeesForSuperAdmin(),
+      fetchAllAdminsForSuperAdmin(),
+      fetchAdminAssignmentsDirectory(),
+      fetchXScoreLogs({ isSuperAdmin: true, uid: 'super_admin' }),
+      fetchMonthlyArchives()
+    ]);
+
+  const assignmentMap = new Map<string, string[]>();
+  for (const item of assignmentsDir) {
+    assignmentMap.set(item.id, item.assignedEmployeeIds || []);
+  }
+
+  return {
+    schemaVersion: 'xscore-backup-v1',
+    exportedAt: new Date().toISOString(),
+    cycleLabel: stats?.cycleLabel || 'الدورة الحالية',
+    stats: stats
+      ? {
+          totalEmployees: stats.totalEmployees,
+          avgDiscount: stats.avgDiscount,
+          totalExcess: stats.totalExcess,
+          employeesWithExcess: stats.employeesWithExcess,
+          seedInitialized: stats.seedInitialized,
+          cycleLabel: stats.cycleLabel
+        }
+      : null,
+    departments,
+    employees: employees.map((e) => ({
+      id: e.id,
+      serial: e.serial,
+      code: e.code,
+      name: e.name,
+      department: e.department,
+      excessCount: e.excessCount,
+      discountPercentage: e.discountPercentage,
+      recentLogs: e.recentLogs || [],
+      assignedAdminKeys: e.assignedAdminKeys || []
+    })),
+    admins: admins.map((a) => ({
+      id: a.id,
+      email: a.email,
+      displayName: a.displayName,
+      role: a.role,
+      canAssignEmployees: a.canAssignEmployees,
+      active: a.active,
+      assignedCount: a.assignedCount,
+      createdByEmail: a.createdByEmail,
+      assignedEmployeeIds: assignmentMap.get(a.id) || []
+    })),
+    xscoreLogs: xscoreLogs.map((l) => ({
+      id: l.id,
+      employeeId: l.employeeId,
+      employeeCode: l.employeeCode,
+      employeeName: l.employeeName,
+      delta: l.delta,
+      previousExcess: l.previousExcess,
+      newExcess: l.newExcess,
+      previousDiscount: l.previousDiscount,
+      newDiscount: l.newDiscount,
+      reason: l.reason,
+      category: l.category,
+      dateLabel: l.dateLabel,
+      recordedByUid: l.recordedByUid,
+      recordedByName: l.recordedByName,
+      recordedByRole: l.recordedByRole
+    })),
+    monthlyArchives: monthlyArchives.map((arc) => ({
+      id: arc.id,
+      title: arc.title,
+      totalEmployees: arc.totalEmployees,
+      penalizedEmployees: arc.penalizedEmployees,
+      totalExcess: arc.totalExcess,
+      avgDiscount: arc.avgDiscount,
+      records: arc.records || [],
+      closedByUid: arc.closedByUid,
+      closedByName: arc.closedByName
+    }))
+  };
+}
+
+export async function importFullAppBackup(params: {
+  payload: FullAppBackupPayload;
+  uid: string;
+  superAdminEmail: string;
+  replaceExisting: boolean;
+}): Promise<{
+  employeesCount: number;
+  departmentsCount: number;
+  adminsCount: number;
+  logsCount: number;
+  archivesCount: number;
+}> {
+  const { payload, uid, superAdminEmail, replaceExisting } = params;
+  const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+  // Optional cleanup of existing records when replaceExisting is enabled
+  if (replaceExisting) {
+    const [existingEmployees, existingAdmins, existingLogs, existingArchives] = await Promise.all([
+      fetchAllEmployeesForSuperAdmin(),
+      fetchAllAdminsForSuperAdmin(),
+      fetchXScoreLogs({ isSuperAdmin: true, uid }),
+      fetchMonthlyArchives()
+    ]);
+
+    const incomingEmpIds = new Set(payload.employees.map((e) => sanitizeId(e.id)));
+    const incomingAdminIds = new Set(payload.admins.map((a) => sanitizeId(a.id)));
+    const incomingLogIds = new Set(payload.xscoreLogs.map((l) => sanitizeId(l.id)));
+    const incomingArchiveIds = new Set(payload.monthlyArchives.map((m) => sanitizeId(m.id)));
+
+    for (const emp of existingEmployees) {
+      if (!incomingEmpIds.has(emp.id)) {
+        operations.push((batch) => batch.delete(doc(db, 'employees', emp.id)));
+      }
+    }
+
+    const existingAssignDir = await fetchAdminAssignmentsDirectory();
+    for (const adm of existingAdmins) {
+      const assignEntry = existingAssignDir.find((x) => x.id === adm.id);
+      if (assignEntry) {
+        for (const empId of assignEntry.assignedEmployeeIds || []) {
+          operations.push((batch) =>
+            batch.delete(doc(db, 'admins', adm.id, 'assignedEmployees', empId))
+          );
+        }
+      }
+      if (!incomingAdminIds.has(adm.id)) {
+        operations.push((batch) => batch.delete(doc(db, 'admins', adm.id)));
+      }
+    }
+
+    for (const l of existingLogs) {
+      if (!incomingLogIds.has(l.id)) {
+        operations.push((batch) => batch.delete(doc(db, 'xscore_logs', l.id)));
+      }
+    }
+
+    for (const arc of existingArchives) {
+      if (!incomingArchiveIds.has(arc.id)) {
+        operations.push((batch) => batch.delete(doc(db, 'monthly_archives', arc.id)));
+      }
+    }
+  }
+
+  // 1. Departments
+  const deptSeen = new Set<string>();
+  const cleanDepts: DepartmentItem[] = [];
+  for (const d of payload.departments || []) {
+    const name = String(d.name || '').trim().slice(0, 80);
+    if (!name || deptSeen.has(name)) continue;
+    deptSeen.add(name);
+    cleanDepts.push({
+      id: sanitizeId(d.id || `dept_${cleanDepts.length + 1}`),
+      name
+    });
+  }
+  const finalDepts = cleanDepts.length > 0 ? cleanDepts.slice(0, 200) : getDefaultDepartmentItems();
+  operations.push((batch) =>
+    batch.set(doc(db, 'directory', 'departments'), {
+      items: finalDepts,
+      updatedAt: serverTimestamp()
+    })
+  );
+
+  // 2. Employees & Directory Index
+  const dirEmployeeItems: DirectoryEmployeeItem[] = [];
+  const validEmployeeIds = new Set<string>();
+
+  for (let i = 0; i < (payload.employees || []).length; i += 1) {
+    const emp = payload.employees[i];
+    const name = String(emp.name || '').trim().slice(0, 120);
+    if (!name) continue;
+    const serial = Math.max(0, Math.min(1000000, Math.round(Number(emp.serial) || i + 1)));
+    const code = String(emp.code || '').trim().slice(0, 32);
+    const empId = emp.id ? sanitizeId(emp.id) : makeEmployeeDocId(code, serial);
+    const department = (String(emp.department || 'عام').trim() || 'عام').slice(0, 80);
+    const excessCount = Math.max(0, Math.min(100000, Math.round(Number(emp.excessCount) || 0)));
+    const discountPercentage = Math.max(
+      0,
+      Math.min(100, Math.round(Number(emp.discountPercentage) || 0))
+    );
+    const recentLogs = Array.isArray(emp.recentLogs) ? emp.recentLogs.slice(0, 50) : [];
+    const assignedAdminKeys = Array.isArray(emp.assignedAdminKeys)
+      ? emp.assignedAdminKeys.slice(0, 15).map((k) => sanitizeId(String(k)))
+      : [];
+
+    validEmployeeIds.add(empId);
+    dirEmployeeItems.push({
+      id: empId,
+      serial,
+      code,
+      name,
+      department,
+      excessCount,
+      discountPercentage
+    });
+
+    operations.push((batch) =>
+      batch.set(doc(db, 'employees', empId), {
+        serial,
+        code,
+        name,
+        department,
+        excessCount,
+        discountPercentage,
+        recentLogs,
+        assignedAdminKeys,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
+    );
+  }
+
+  const sortedDirItems = dirEmployeeItems.sort((a, b) => a.serial - b.serial).slice(0, 2000);
+  operations.push((batch) =>
+    batch.set(doc(db, 'directory', 'employees_index'), {
+      items: sortedDirItems,
+      updatedAt: serverTimestamp()
+    })
+  );
+
+  // 3. Admins & Assignments
+  const dirAssignments: AdminAssignmentDirectoryItem[] = [];
+  let adminsCount = 0;
+
+  for (const adm of payload.admins || []) {
+    const email = String(adm.email || '').trim().toLowerCase().slice(0, 120);
+    const displayName = String(adm.displayName || '').trim().slice(0, 80);
+    if (!email || !displayName) continue;
+
+    const adminKey = sanitizeId(adm.id || `adm_${adminsCount + 1}`);
+    const role: 'assistant_admin' | 'supervisor' =
+      adm.role === 'assistant_admin' ? 'assistant_admin' : 'supervisor';
+    const assignedIds =
+      role === 'supervisor'
+        ? (adm.assignedEmployeeIds || [])
+            .map((id) => sanitizeId(String(id)))
+            .filter((id) => validEmployeeIds.has(id))
+        : [];
+
+    adminsCount += 1;
+
+    operations.push((batch) =>
+      batch.set(doc(db, 'admins', adminKey), {
+        email,
+        displayName,
+        role,
+        canAssignEmployees: Boolean(adm.canAssignEmployees),
+        active: adm.active !== false,
+        assignedCount: assignedIds.length,
+        createdByEmail: superAdminEmail.toLowerCase(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      })
+    );
+
+    dirAssignments.push({
+      id: adminKey,
+      displayName,
+      role,
+      canAssignEmployees: Boolean(adm.canAssignEmployees),
+      active: adm.active !== false,
+      assignedEmployeeIds: assignedIds
+    });
+
+    for (const empId of assignedIds) {
+      const empItem = sortedDirItems.find((e) => e.id === empId);
+      if (!empItem) continue;
+      operations.push((batch) =>
+        batch.set(doc(db, 'admins', adminKey, 'assignedEmployees', empId), {
+          employeeId: empId,
+          employeeCode: empItem.code.slice(0, 32),
+          employeeName: empItem.name.slice(0, 120),
+          assignedByUid: uid,
+          createdAt: serverTimestamp()
+        })
+      );
+    }
+  }
+
+  operations.push((batch) =>
+    batch.set(doc(db, 'directory', 'admin_assignments'), {
+      items: dirAssignments,
+      updatedAt: serverTimestamp()
+    })
+  );
+
+  // 4. Stats Summary
+  const computed = computeSummaryFromItems(sortedDirItems);
+  const cycleLabel =
+    String(payload.cycleLabel || payload.stats?.cycleLabel || 'الدورة الحالية').slice(0, 60) ||
+    'الدورة الحالية';
+
+  operations.push((batch) =>
+    batch.set(doc(db, 'stats', 'summary'), {
+      ...computed,
+      seedInitialized: sortedDirItems.length > 0 || Boolean(payload.stats?.seedInitialized),
+      cycleLabel,
+      updatedAt: serverTimestamp()
+    })
+  );
+
+  // 5. Audit Logs & Monthly Archives (Phase 2: committed after employees/admins exist for rules exists() checks)
+  const phase2Operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+  let logsCount = 0;
+  for (const log of payload.xscoreLogs || []) {
+    const empId = sanitizeId(String(log.employeeId || ''));
+    if (!validEmployeeIds.has(empId)) continue;
+    const logId = sanitizeId(String(log.id || `log_${Date.now()}_${logsCount}`));
+    logsCount += 1;
+
+    phase2Operations.push((batch) =>
+      batch.set(doc(db, 'xscore_logs', logId), {
+        employeeId: empId,
+        employeeCode: String(log.employeeCode || '').slice(0, 32),
+        employeeName: (String(log.employeeName || '').trim() || 'موظف').slice(0, 120),
+        delta: Math.max(-1000, Math.min(1000, Number(log.delta) || 0)),
+        previousExcess: Math.max(0, Math.min(100000, Number(log.previousExcess) || 0)),
+        newExcess: Math.max(0, Math.min(100000, Number(log.newExcess) || 0)),
+        previousDiscount: Math.max(0, Math.min(100, Number(log.previousDiscount) || 0)),
+        newDiscount: Math.max(0, Math.min(100, Number(log.newDiscount) || 0)),
+        reason: (String(log.reason || '').trim() || 'تسجيل مستعاد').slice(0, 200),
+        category: (String(log.category || '').trim() || 'تعديل إداري').slice(0, 60),
+        dateLabel: String(log.dateLabel || '').slice(0, 40),
+        recordedByUid: uid,
+        recordedByName: (String(log.recordedByName || '').trim() || 'الأدمن الرئيسي').slice(0, 80),
+        recordedByRole: (String(log.recordedByRole || '').trim() || 'super_admin').slice(0, 32),
+        createdAt: serverTimestamp()
+      })
+    );
+  }
+
+  let archivesCount = 0;
+  for (const arc of payload.monthlyArchives || []) {
+    const title = String(arc.title || '').trim().slice(0, 100);
+    if (!title) continue;
+    const archiveId = sanitizeId(String(arc.id || `arc_${Date.now()}_${archivesCount}`));
+    archivesCount += 1;
+
+    phase2Operations.push((batch) =>
+      batch.set(doc(db, 'monthly_archives', archiveId), {
+        title,
+        totalEmployees: Math.max(0, Math.min(100000, Number(arc.totalEmployees) || 0)),
+        penalizedEmployees: Math.max(0, Math.min(100000, Number(arc.penalizedEmployees) || 0)),
+        totalExcess: Math.max(0, Math.min(10000000, Number(arc.totalExcess) || 0)),
+        avgDiscount: Math.max(0, Math.min(100, Number(arc.avgDiscount) || 0)),
+        records: Array.isArray(arc.records) ? arc.records.slice(0, 1000) : [],
+        closedByUid: uid,
+        closedByName: (String(arc.closedByName || '').trim() || 'الأدمن الرئيسي').slice(0, 80),
+        createdAt: serverTimestamp()
+      })
+    );
+  }
+
+  const chunkSize = 350;
+  try {
+    for (let i = 0; i < operations.length; i += chunkSize) {
+      const batch = writeBatch(db);
+      const slice = operations.slice(i, i + chunkSize);
+      for (const op of slice) {
+        op(batch);
+      }
+      await batch.commit();
+    }
+
+    for (let i = 0; i < phase2Operations.length; i += chunkSize) {
+      const batch = writeBatch(db);
+      const slice = phase2Operations.slice(i, i + chunkSize);
+      for (const op of slice) {
+        op(batch);
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'backup_restore');
+  }
+
+  return {
+    employeesCount: sortedDirItems.length,
+    departmentsCount: finalDepts.length,
+    adminsCount,
+    logsCount,
+    archivesCount
+  };
 }

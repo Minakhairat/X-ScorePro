@@ -23,9 +23,7 @@ export function TopBar({
   onSignOut
 }: TopBarProps) {
   const isAuthorizedAdmin = session.role !== 'none' && session.active;
-  const canManageAdmins =
-    session.role === 'super_admin' ||
-    (session.role === 'assistant_admin' && session.canAssignEmployees);
+  const canManageAdmins = session.role === 'super_admin';
 
   const navItems: { id: AppTab; label: string; visible: boolean }[] = [
     { id: 'lookup', label: 'الاستعلام السريع', visible: true },

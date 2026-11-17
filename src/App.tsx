@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { AlertTriangle, Database } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { TopBar, type AppTab } from './components/TopBar';
 import { WorkerLookupView } from './components/WorkerLookupView';
 import { PolicySimulatorView } from './components/PolicySimulatorView';
@@ -19,14 +19,16 @@ import {
 import {
   fetchAllEmployeesForSuperAdmin,
   fetchAssignedEmployeesByIds,
+  fetchDepartments,
   fetchDirectoryEmployeesIndex,
   fetchStatsSummary,
-  getSeedFallbackSummary,
-  resolveAdminSession,
-  seedExcelEmployeesToFirestore
+  getDefaultDepartmentItems,
+  getEmptySummary,
+  resolveAdminSession
 } from './lib/xscoreService';
 import {
   type AdminSession,
+  type DepartmentItem,
   type Employee,
   type StatsSummary
 } from './types/xscore';
@@ -52,8 +54,10 @@ export default function App() {
 
   const [summary, setSummary] = useState<StatsSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
-  const [seedingNotice, setSeedingNotice] = useState<string | null>(null);
 
+  const [departments, setDepartments] = useState<DepartmentItem[]>(() =>
+    getDefaultDepartmentItems()
+  );
   const [adminEmployees, setAdminEmployees] = useState<Employee[]>([]);
   const [adminEmployeesLoading, setAdminEmployeesLoading] = useState(false);
 
@@ -64,13 +68,13 @@ export default function App() {
     setSummaryLoading(true);
     try {
       const liveSummary = await fetchStatsSummary();
-      if (liveSummary && liveSummary.seedInitialized) {
+      if (liveSummary) {
         setSummary(liveSummary);
       } else {
-        setSummary(getSeedFallbackSummary());
+        setSummary(getEmptySummary());
       }
     } catch {
-      setSummary(getSeedFallbackSummary());
+      setSummary(getEmptySummary());
     } finally {
       setSummaryLoading(false);
     }
@@ -84,13 +88,13 @@ export default function App() {
 
     setAdminEmployeesLoading(true);
     try {
+      const [deptList] = await Promise.all([fetchDepartments()]);
+      setDepartments(deptList);
+
       if (activeSession.role === 'super_admin') {
         const list = await fetchAllEmployeesForSuperAdmin();
         setAdminEmployees(list);
-      } else if (
-        activeSession.role === 'assistant_admin' &&
-        activeSession.canAssignEmployees
-      ) {
+      } else if (activeSession.role === 'assistant_admin') {
         const dirItems = await fetchDirectoryEmployeesIndex();
         setAdminEmployees(
           dirItems.map((item) => ({
@@ -114,13 +118,11 @@ export default function App() {
     }
   }, []);
 
-  // Boot connection validation + initial summary load
   useEffect(() => {
     void testFirestoreConnection();
     void loadSummary();
   }, [loadSummary]);
 
-  // Listen to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -149,22 +151,11 @@ export default function App() {
           return;
         }
 
-        // Auto-seed Excel employees into Firestore on first Super Admin login
-        if (resolved.role === 'super_admin') {
-          const liveSummary = await fetchStatsSummary();
-          if (!liveSummary || !liveSummary.seedInitialized) {
-            setSeedingNotice(
-              'جاري ترحيل بيانات الموظفين من ملف الإكسيل (244 موظف) إلى قاعدة بيانات Firebase...'
-            );
-            const seeded = await seedExcelEmployeesToFirestore();
-            setSummary(seeded);
-            setSeedingNotice(null);
-          } else {
-            setSummary(liveSummary);
-          }
+        if (resolved.role !== 'super_admin') {
+          setActiveTab((prev) => (prev === 'admins_rbac' ? 'admin' : prev));
         }
 
-        await loadAdminEmployees(resolved);
+        await Promise.all([loadSummary(), loadAdminEmployees(resolved)]);
       } catch (err) {
         console.error('Auth resolution error:', err);
         setAuthNotice('تعذر التحقق من صلاحيات الحساب. يرجى المحاولة مرة أخرى.');
@@ -174,7 +165,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [loadAdminEmployees]);
+  }, [loadAdminEmployees, loadSummary]);
 
   async function handleSignIn() {
     setAuthBusy(true);
@@ -208,13 +199,11 @@ export default function App() {
 
   function canQuickRecordFor(employeeId: string): boolean {
     if (!session.active || session.role === 'none') return false;
-    if (session.role === 'super_admin') return true;
-    if (session.role === 'assistant_admin' && session.canAssignEmployees) return true;
+    if (session.role === 'super_admin' || session.role === 'assistant_admin') return true;
     return session.assignedEmployeeIds.includes(employeeId);
   }
 
   async function handleOpenRecordModal(employee: Employee) {
-    // Ensure we have full recentLogs before editing
     if (!employee.recentLogs || employee.recentLogs.length === 0) {
       try {
         const snap = await getDoc(doc(db, 'employees', employee.id));
@@ -238,6 +227,15 @@ export default function App() {
     );
   }
 
+  function handleDepartmentUpdatedLocal(employeeId: string, department: string) {
+    setAdminEmployees((prev) =>
+      prev.map((item) => (item.id === employeeId ? { ...item, department } : item))
+    );
+    if (lastUpdatedEmployee && lastUpdatedEmployee.id === employeeId) {
+      setLastUpdatedEmployee({ ...lastUpdatedEmployee, department });
+    }
+  }
+
   return (
     <div className="min-h-[100dvh] flex flex-col bg-slate-50 text-slate-900">
       <TopBar
@@ -251,13 +249,6 @@ export default function App() {
       />
 
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5">
-        {seedingNotice && (
-          <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm font-semibold flex items-center gap-3">
-            <Database className="w-5 h-5 text-red-600 animate-pulse shrink-0" />
-            <span>{seedingNotice}</span>
-          </div>
-        )}
-
         {authNotice && (
           <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm font-medium flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
@@ -274,6 +265,7 @@ export default function App() {
             canQuickRecordFor={canQuickRecordFor}
             onOpenRecordModal={(emp) => void handleOpenRecordModal(emp)}
             lastUpdatedEmployee={lastUpdatedEmployee}
+            scopedEmployees={adminEmployees}
           />
         )}
 
@@ -286,21 +278,21 @@ export default function App() {
             employees={adminEmployees}
             employeesLoading={adminEmployeesLoading}
             summary={summary}
+            departments={departments}
+            onDepartmentsChanged={setDepartments}
+            onDepartmentUpdatedLocal={handleDepartmentUpdatedLocal}
             onRefreshData={refreshAdminWorkspace}
             onOpenRecordModal={(emp) => void handleOpenRecordModal(emp)}
           />
         )}
 
-        {activeTab === 'admins_rbac' &&
-          (session.role === 'super_admin' ||
-            (session.role === 'assistant_admin' && session.canAssignEmployees)) &&
-          currentUser && (
-            <AdminManagementView
-              session={session}
-              uid={currentUser.uid}
-              onAssignmentsChanged={refreshAdminWorkspace}
-            />
-          )}
+        {activeTab === 'admins_rbac' && session.role === 'super_admin' && currentUser && (
+          <AdminManagementView
+            session={session}
+            uid={currentUser.uid}
+            onAssignmentsChanged={refreshAdminWorkspace}
+          />
+        )}
 
         {activeTab === 'logs' && session.role !== 'none' && session.active && currentUser && (
           <AuditAndArchivesView session={session} uid={currentUser.uid} />

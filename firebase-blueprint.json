@@ -117,6 +117,22 @@
       },
       "required": ["items", "updatedAt"]
     },
+    "DepartmentsDirectory": {
+      "title": "DepartmentsDirectory",
+      "description": "Super-Admin-managed list of factory departments and production lines",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "Array of { id, name } department/production line objects (max 200)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["items", "updatedAt"]
+    },
     "AdminRecord": {
       "title": "AdminRecord",
       "description": "Sub-admin or assistant admin account record",

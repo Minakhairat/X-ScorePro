@@ -1,5 +1,23 @@
 export const SUPER_ADMIN_EMAIL = 'minakhairat1@gmail.com';
 
+export const DEFAULT_EXCESS_ALERT_THRESHOLD = 15;
+export const EXCESS_THRESHOLD_OPTIONS = [10, 15, 20, 25, 30] as const;
+
+export const DEFAULT_DEPARTMENTS: string[] = [
+  'عام',
+  'خط المبرد الصحراوي',
+  'خط الميكروويف',
+  'الجودة',
+  'التعبئة والتغليف',
+  'المخازن',
+  'الصيانة'
+];
+
+export interface DepartmentItem {
+  id: string;
+  name: string;
+}
+
 export interface XScoreLogEntry {
   id: string;
   delta: number;
@@ -104,6 +122,27 @@ export interface MonthlyArchiveRecord {
   createdAt?: unknown;
 }
 
+export interface ExcelEmployeeImportRow {
+  serial?: number;
+  code: string;
+  name: string;
+  department: string;
+  excessCount: number;
+  discountPercentage: number;
+}
+
+export interface FullAppBackupPayload {
+  schemaVersion: 'xscore-backup-v1';
+  exportedAt: string;
+  cycleLabel: string;
+  stats: StatsSummary | null;
+  departments: DepartmentItem[];
+  employees: Employee[];
+  admins: Array<AdminRecord & { assignedEmployeeIds: string[] }>;
+  xscoreLogs: XScoreAuditLog[];
+  monthlyArchives: MonthlyArchiveRecord[];
+}
+
 export type AdminSessionRole = 'super_admin' | 'assistant_admin' | 'supervisor' | 'none';
 
 export interface AdminSession {
@@ -161,5 +200,65 @@ export function getIncentiveStanding(discountPercentage: number): {
     label: `خصم مرتفع (${discountPercentage}%)`,
     detail: `صافي الاستحقاق الشهري ${Math.max(0, 100 - discountPercentage)}% — يتطلب مراجعة`,
     tone: 'danger'
+  };
+}
+
+export interface MonthThresholdAnalysis {
+  threshold: number;
+  effectiveMonthExcess: number;
+  last30DaysAdded: number;
+  last30DaysLogsCount: number;
+  crossed: boolean;
+  nearThreshold: boolean;
+  severity: 'normal' | 'warning' | 'critical';
+  overBy: number;
+  progressPct: number;
+}
+
+export function getLastMonthExcessAnalysis(
+  employee: Pick<Employee, 'excessCount' | 'recentLogs'>,
+  threshold: number = DEFAULT_EXCESS_ALERT_THRESHOLD
+): MonthThresholdAnalysis {
+  const safeThreshold = Math.max(1, Math.round(threshold));
+  const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  let last30DaysAdded = 0;
+  let last30DaysLogsCount = 0;
+
+  for (const log of employee.recentLogs || []) {
+    const parsedTime = Date.parse(log.createdAtIso || '');
+    const isWithinLastMonth = Number.isFinite(parsedTime) ? parsedTime >= thirtyDaysAgoMs : false;
+    if (isWithinLastMonth) {
+      last30DaysLogsCount += 1;
+      if (Number(log.delta) > 0) {
+        last30DaysAdded += Number(log.delta);
+      }
+    }
+  }
+
+  const currentExcess = Number(employee.excessCount) || 0;
+  const effectiveMonthExcess = Math.max(currentExcess, last30DaysAdded);
+  const crossed = effectiveMonthExcess >= safeThreshold;
+  const nearThreshold = !crossed && effectiveMonthExcess >= Math.ceil(safeThreshold * 0.7);
+  const overBy = Math.max(0, effectiveMonthExcess - safeThreshold);
+  const progressPct = Math.min(100, Math.round((effectiveMonthExcess / safeThreshold) * 100));
+
+  let severity: 'normal' | 'warning' | 'critical' = 'normal';
+  if (effectiveMonthExcess >= safeThreshold + 10 || effectiveMonthExcess >= 25) {
+    severity = crossed ? 'critical' : 'normal';
+  } else if (crossed) {
+    severity = 'warning';
+  }
+
+  return {
+    threshold: safeThreshold,
+    effectiveMonthExcess,
+    last30DaysAdded,
+    last30DaysLogsCount,
+    crossed,
+    nearThreshold,
+    severity,
+    overBy,
+    progressPct
   };
 }
