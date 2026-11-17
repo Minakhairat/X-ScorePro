@@ -34,15 +34,32 @@ import {
   type XScoreLogEntry
 } from '../types/xscore';
 
-function sanitizeId(raw: string): string {
-  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
-  return cleaned || 'item';
+function hashStringBase36(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function sanitizeId(raw: string, maxLen = 64): string {
+  if (/^[a-zA-Z0-9_-]+$/.test(raw)) {
+    return raw.slice(0, maxLen);
+  }
+  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+  const suffix = hashStringBase36(raw);
+  if (!cleaned || cleaned === '_') {
+    return `h_${suffix}`.slice(0, maxLen);
+  }
+  const prefixLen = Math.max(1, maxLen - suffix.length - 1);
+  return `${cleaned.slice(0, prefixLen)}_${suffix}`;
 }
 
 export function makeEmployeeDocId(code: string, serial: number): string {
   const trimmed = code.trim();
   if (trimmed.length > 0) {
-    return `emp_${sanitizeId(trimmed)}`;
+    return `emp_${sanitizeId(trimmed, 60)}`;
   }
   return `emp_row_${serial}`;
 }
@@ -840,7 +857,14 @@ export async function importEmployeesFromExcelRows(params: {
   mode: 'merge' | 'add_new_only';
   cycleLabel?: string;
   isSuperAdmin?: boolean;
-}): Promise<{ createdCount: number; updatedCount: number; skippedCount: number; summary: StatsSummary }> {
+}): Promise<{
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  emptyNameCount: number;
+  duplicateCodes: Array<{ code: string; names: string[] }>;
+  summary: StatsSummary;
+}> {
   const { rows, mode, cycleLabel = 'الدورة الحالية', isSuperAdmin = false } = params;
 
   let dirSnap;
@@ -899,6 +923,7 @@ export async function importEmployeesFromExcelRows(params: {
   let createdCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
+  let emptyNameCount = 0;
 
   // Deduplicate incoming rows by target empId so each doc is written once per import
   const pendingWrites = new Map<
@@ -913,10 +938,12 @@ export async function importEmployeesFromExcelRows(params: {
       discountPercentage: number;
     }
   >();
+  const duplicateMap = new Map<string, { code: string; names: string[] }>();
 
   for (const row of rows) {
     const cleanName = String(row.name ?? '').trim().slice(0, 120);
     if (!cleanName) {
+      emptyNameCount += 1;
       skippedCount += 1;
       continue;
     }
@@ -934,10 +961,41 @@ export async function importEmployeesFromExcelRows(params: {
 
     const rawSerial = Number(row.serial);
     const hasValidRowSerial = Number.isFinite(rawSerial) && rawSerial > 0 && rawSerial <= 1000000;
-    const candidateSerial = hasValidRowSerial
+    let candidateSerial = hasValidRowSerial
       ? Math.round(rawSerial)
       : Math.min(1000000, maxSerial + 1);
-    const empId = makeEmployeeDocId(cleanCode, candidateSerial);
+    let empId = makeEmployeeDocId(cleanCode, candidateSerial);
+
+    // If two rows without a code share the same serial number (e.g. restarted serial per section),
+    // assign the next free serial instead of overwriting the earlier employee.
+    if (!cleanCode && (pendingWrites.has(empId) || itemMap.has(empId))) {
+      const existingAtId = itemMap.get(empId);
+      const isDifferentPersonInSameImport = pendingWrites.has(empId);
+      const isDifferentExistingPerson =
+        Boolean(existingAtId) &&
+        (existingAtId!.code !== '' || existingAtId!.name.trim() !== cleanName);
+      if (isDifferentPersonInSameImport || isDifferentExistingPerson) {
+        do {
+          maxSerial = Math.min(1000000, maxSerial + 1);
+          candidateSerial = maxSerial;
+          empId = makeEmployeeDocId('', candidateSerial);
+        } while (pendingWrites.has(empId) || itemMap.has(empId));
+      }
+    }
+
+    const prevInBatch = pendingWrites.get(empId);
+    if (prevInBatch && cleanCode) {
+      const existingDup = duplicateMap.get(empId);
+      if (existingDup) {
+        existingDup.names.push(cleanName);
+      } else {
+        duplicateMap.set(empId, {
+          code: cleanCode,
+          names: [prevInBatch.name, cleanName]
+        });
+      }
+    }
+
     const existing = itemMap.get(empId);
 
     if (existing && mode === 'add_new_only') {
@@ -1206,6 +1264,8 @@ export async function importEmployeesFromExcelRows(params: {
     createdCount,
     updatedCount,
     skippedCount,
+    emptyNameCount,
+    duplicateCodes: Array.from(duplicateMap.values()),
     summary: {
       ...computed,
       seedInitialized: finalItems.length > 0,

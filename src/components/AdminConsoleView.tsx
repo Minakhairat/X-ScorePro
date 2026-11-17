@@ -34,6 +34,7 @@ import {
   exportFullAppBackup,
   importEmployeesFromExcelRows,
   importFullAppBackup,
+  makeEmployeeDocId,
   saveDepartments,
   updateEmployeeDepartment
 } from '../lib/xscoreService';
@@ -302,30 +303,77 @@ export function AdminConsoleView({
     }
   }
 
-  const mappedExcelRows = useMemo<ExcelEmployeeImportRow[]>(() => {
-    if (!parsedSheet || !parsedSheet.colName) return [];
-    const results: ExcelEmployeeImportRow[] = [];
+  function parseExcelNumber(val: unknown): number {
+    if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+    const normalized = String(val ?? '')
+      .trim()
+      .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+      .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
 
-    for (const raw of parsedSheet.rawRows) {
+  const excelImportPreview = useMemo(() => {
+    if (!parsedSheet || !parsedSheet.colName) {
+      return {
+        rows: [] as ExcelEmployeeImportRow[],
+        rawRowCount: parsedSheet?.rawRows.length || 0,
+        emptyNameRowNumbers: [] as number[],
+        duplicateCodes: [] as Array<{
+          code: string;
+          entries: Array<{ rowNumber: number; name: string }>;
+        }>,
+        uniqueCount: 0
+      };
+    }
+
+    const rows: ExcelEmployeeImportRow[] = [];
+    const emptyNameRowNumbers: number[] = [];
+    const codeGroups = new Map<
+      string,
+      { code: string; entries: Array<{ rowNumber: number; name: string }> }
+    >();
+    let extraDuplicateRows = 0;
+
+    parsedSheet.rawRows.forEach((raw, idx) => {
+      const excelRowNumber = idx + 2; // Row 1 is header
       const name = String(raw[parsedSheet.colName] ?? '').trim();
-      if (!name) continue;
+      if (!name) {
+        emptyNameRowNumbers.push(excelRowNumber);
+        return;
+      }
+
       const code = parsedSheet.colCode ? String(raw[parsedSheet.colCode] ?? '').trim() : '';
       const deptRaw = parsedSheet.colDept ? String(raw[parsedSheet.colDept] ?? '').trim() : '';
       const department = deptRaw || departments[0]?.name || 'عام';
       const excessCount = parsedSheet.colExcess
-        ? Math.max(0, Math.round(Number(raw[parsedSheet.colExcess]) || 0))
+        ? Math.max(0, Math.round(parseExcelNumber(raw[parsedSheet.colExcess])))
         : 0;
       const discountPercentage = parsedSheet.colDiscount
         ? Math.max(
             0,
-            Math.min(100, Math.round(Number(raw[parsedSheet.colDiscount]) || 0))
+            Math.min(100, Math.round(parseExcelNumber(raw[parsedSheet.colDiscount])))
           )
         : calculateDiscountFromExcess(excessCount);
       const serial = parsedSheet.colSerial
-        ? Math.round(Number(raw[parsedSheet.colSerial]) || 0) || undefined
+        ? Math.round(parseExcelNumber(raw[parsedSheet.colSerial])) || undefined
         : undefined;
 
-      results.push({
+      if (code) {
+        const key = makeEmployeeDocId(code, 0);
+        const existingGroup = codeGroups.get(key);
+        if (existingGroup) {
+          existingGroup.entries.push({ rowNumber: excelRowNumber, name });
+          extraDuplicateRows += 1;
+        } else {
+          codeGroups.set(key, {
+            code,
+            entries: [{ rowNumber: excelRowNumber, name }]
+          });
+        }
+      }
+
+      rows.push({
         serial,
         code,
         name,
@@ -333,10 +381,20 @@ export function AdminConsoleView({
         excessCount,
         discountPercentage
       });
-    }
+    });
 
-    return results;
+    const duplicateCodes = Array.from(codeGroups.values()).filter((g) => g.entries.length > 1);
+
+    return {
+      rows,
+      rawRowCount: parsedSheet.rawRows.length,
+      emptyNameRowNumbers,
+      duplicateCodes,
+      uniqueCount: Math.max(0, rows.length - extraDuplicateRows)
+    };
   }, [parsedSheet, departments]);
+
+  const mappedExcelRows = excelImportPreview.rows;
 
   async function handleConfirmExcelImport() {
     if (mappedExcelRows.length === 0) return;
@@ -349,12 +407,37 @@ export function AdminConsoleView({
         cycleLabel: summary?.cycleLabel || 'الدورة الحالية',
         isSuperAdmin
       });
+      const ignoredEmptyRows = excelImportPreview.emptyNameRowNumbers;
       setExcelModalOpen(false);
       setParsedSheet(null);
       await onRefreshData();
+
+      const notes: string[] = [];
+      if (res.duplicateCodes.length > 0) {
+        const previewDup = res.duplicateCodes
+          .slice(0, 3)
+          .map((d) => `${d.code} (${d.names.join(' / ')})`)
+          .join('، ');
+        notes.push(
+          `تم دمج ${res.duplicateCodes.length} كود مكرر بالملف: ${previewDup}${
+            res.duplicateCodes.length > 3 ? '...' : ''
+          }`
+        );
+      }
+      if (ignoredEmptyRows.length > 0) {
+        const previewEmpty = ignoredEmptyRows.slice(0, 5).join('، ');
+        notes.push(
+          `تم تجاهل ${ignoredEmptyRows.length} صف بدون اسم (صف رقم: ${previewEmpty}${
+            ignoredEmptyRows.length > 5 ? '...' : ''
+          })`
+        );
+      }
+
       setFeedback({
         type: 'success',
-        text: `تم استيراد ملف الإكسيل: إضافة ${res.createdCount} موظف، تحديث ${res.updatedCount}، وتخطي ${res.skippedCount}.`
+        text: `تم استيراد ملف الإكسيل: إضافة ${res.createdCount} موظف، تحديث ${res.updatedCount}، وتخطي ${res.skippedCount}.${
+          notes.length > 0 ? ` (${notes.join(' | ')})` : ''
+        }`
       });
     } catch (err) {
       let detail = '';
@@ -1260,10 +1343,62 @@ export function AdminConsoleView({
                     </div>
                   </div>
 
+                  {(excelImportPreview.emptyNameRowNumbers.length > 0 ||
+                    excelImportPreview.duplicateCodes.length > 0) && (
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-2">
+                      <div className="flex items-center gap-2 font-bold text-amber-800">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>
+                          ملاحظات مهمة قبل الرفع (إجمالي صفوف الملف: {excelImportPreview.rawRowCount}{' '}
+                          • الصافي الفريد: {excelImportPreview.uniqueCount} موظف)
+                        </span>
+                      </div>
+
+                      {excelImportPreview.duplicateCodes.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="font-semibold">
+                            • يوجد {excelImportPreview.duplicateCodes.length} كود مكرر في الملف
+                            (كل كود يُحفظ في سجل واحد بالنظام):
+                          </div>
+                          <ul className="list-disc pr-5 space-y-0.5 text-[11px] text-amber-800">
+                            {excelImportPreview.duplicateCodes.slice(0, 5).map((dup) => (
+                              <li key={dup.code}>
+                                كود <span className="font-mono font-bold">{dup.code}</span> مكرر في:{' '}
+                                {dup.entries
+                                  .map((e) => `صف ${e.rowNumber} (${e.name})`)
+                                  .join(' و ')}
+                              </li>
+                            ))}
+                            {excelImportPreview.duplicateCodes.length > 5 && (
+                              <li>
+                                و{excelImportPreview.duplicateCodes.length - 5} أكواد مكررة أخرى...
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+
+                      {excelImportPreview.emptyNameRowNumbers.length > 0 && (
+                        <div>
+                          • تم استبعاد {excelImportPreview.emptyNameRowNumbers.length} صف بدون اسم
+                          (صف رقم:{' '}
+                          <span className="font-mono font-semibold">
+                            {excelImportPreview.emptyNameRowNumbers.slice(0, 8).join('، ')}
+                            {excelImportPreview.emptyNameRowNumbers.length > 8 ? '...' : ''}
+                          </span>
+                          ).
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Preview Table */}
                   <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700 flex items-center justify-between">
-                      <span>معاينة الصفوف المقروءة ({mappedExcelRows.length} موظف)</span>
+                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700 flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        معاينة الصفوف المقروءة ({mappedExcelRows.length} صف صالح •{' '}
+                        {excelImportPreview.uniqueCount} موظف فريد)
+                      </span>
                       <span className="text-slate-500 font-normal">أول 6 صفوف</span>
                     </div>
                     <div className="overflow-x-auto">
@@ -1314,7 +1449,7 @@ export function AdminConsoleView({
               >
                 {busyAction === 'excel_import'
                   ? 'جاري الرفع والحفظ...'
-                  : `اعتماد ورفع (${mappedExcelRows.length}) موظف`}
+                  : `اعتماد ورفع (${excelImportPreview.uniqueCount}) موظف`}
               </button>
             </div>
           </div>
