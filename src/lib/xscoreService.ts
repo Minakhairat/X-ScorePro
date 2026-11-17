@@ -784,10 +784,16 @@ export async function syncDirectoryAndStatsFromEmployees(
     .slice(0, 2000);
 
   const computed = computeSummaryFromItems(dirItems);
-  const [statsSnap, assignSnap] = await Promise.all([
-    getDoc(doc(db, 'stats', 'summary')),
-    getDoc(doc(db, 'directory', 'admin_assignments'))
-  ]);
+  let statsSnap;
+  let assignSnap;
+  try {
+    [statsSnap, assignSnap] = await Promise.all([
+      getDoc(doc(db, 'stats', 'summary')),
+      getDoc(doc(db, 'directory', 'admin_assignments'))
+    ]);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'stats/summary');
+  }
 
   const rawCycle = statsSnap.exists() ? statsSnap.data()?.cycleLabel : '';
   const cycleLabel =
@@ -837,11 +843,18 @@ export async function importEmployeesFromExcelRows(params: {
 }): Promise<{ createdCount: number; updatedCount: number; skippedCount: number; summary: StatsSummary }> {
   const { rows, mode, cycleLabel = 'الدورة الحالية', isSuperAdmin = false } = params;
 
-  const [dirSnap, statsSnap, assignSnap] = await Promise.all([
-    getDoc(doc(db, 'directory', 'employees_index')),
-    getDoc(doc(db, 'stats', 'summary')),
-    getDoc(doc(db, 'directory', 'admin_assignments'))
-  ]);
+  let dirSnap;
+  let statsSnap;
+  let assignSnap;
+  try {
+    [dirSnap, statsSnap, assignSnap] = await Promise.all([
+      getDoc(doc(db, 'directory', 'employees_index')),
+      getDoc(doc(db, 'stats', 'summary')),
+      getDoc(doc(db, 'directory', 'admin_assignments'))
+    ]);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'directory/employees_index');
+  }
 
   const itemMap = new Map<string, DirectoryEmployeeItem>();
   let maxSerial = 0;
@@ -1032,13 +1045,13 @@ export async function importEmployeesFromExcelRows(params: {
     ).slice(0, 60) || 'الدورة الحالية';
 
   operations.push((batch) => {
-    if (dirSnap.exists()) {
-      batch.update(doc(db, 'directory', 'employees_index'), {
+    if (isSuperAdmin || !dirSnap.exists()) {
+      batch.set(doc(db, 'directory', 'employees_index'), {
         items: finalItems,
         updatedAt: serverTimestamp()
       });
     } else {
-      batch.set(doc(db, 'directory', 'employees_index'), {
+      batch.update(doc(db, 'directory', 'employees_index'), {
         items: finalItems,
         updatedAt: serverTimestamp()
       });
@@ -1055,7 +1068,14 @@ export async function importEmployeesFromExcelRows(params: {
   }
 
   operations.push((batch) => {
-    if (statsSnap.exists()) {
+    if (isSuperAdmin || !statsSnap.exists()) {
+      batch.set(doc(db, 'stats', 'summary'), {
+        ...computed,
+        seedInitialized: finalItems.length > 0,
+        cycleLabel: nextCycleLabel,
+        updatedAt: serverTimestamp()
+      });
+    } else {
       batch.update(doc(db, 'stats', 'summary'), {
         totalEmployees: computed.totalEmployees,
         avgDiscount: computed.avgDiscount,
@@ -1064,17 +1084,12 @@ export async function importEmployeesFromExcelRows(params: {
         seedInitialized: finalItems.length > 0,
         updatedAt: serverTimestamp()
       });
-    } else {
-      batch.set(doc(db, 'stats', 'summary'), {
-        ...computed,
-        seedInitialized: finalItems.length > 0,
-        cycleLabel: nextCycleLabel,
-        updatedAt: serverTimestamp()
-      });
     }
   });
 
-  const chunkSize = 350;
+  // For assistant_admin, Firestore Rules evaluate get()/exists() per document in a batch (max 20 per batch),
+  // so keep batches small (4 writes) to never trip the batch lookup limit.
+  const chunkSize = isSuperAdmin ? 350 : 4;
   try {
     for (let i = 0; i < operations.length; i += chunkSize) {
       const batch = writeBatch(db);

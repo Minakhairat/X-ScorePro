@@ -116,6 +116,21 @@ export default function App() {
           }
         } catch (syncErr) {
           console.warn('Auto-sync directory/stats skipped:', syncErr);
+          if (syncErr instanceof Error) {
+            try {
+              const info = JSON.parse(syncErr.message) as {
+                error?: string;
+                operationType?: string;
+                path?: string;
+                authInfo?: { email?: string };
+              };
+              setAuthNotice(
+                `تعذر مزامنة الإحصائيات مع قاعدة البيانات: ${info.error || syncErr.message} [${info.operationType || ''} ${info.path || ''} · ${info.authInfo?.email || activeSession.email}]`
+              );
+            } catch {
+              setAuthNotice(`تعذر مزامنة الإحصائيات مع قاعدة البيانات: ${syncErr.message}`);
+            }
+          }
         }
       } else if (activeSession.role === 'assistant_admin') {
         const dirItems = await fetchDirectoryEmployeesIndex();

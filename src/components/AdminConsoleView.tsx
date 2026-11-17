@@ -360,8 +360,18 @@ export function AdminConsoleView({
       let detail = '';
       if (err instanceof Error) {
         try {
-          const parsed = JSON.parse(err.message) as { error?: string };
-          if (parsed?.error) detail = ` (${parsed.error})`;
+          const parsed = JSON.parse(err.message) as {
+            error?: string;
+            operationType?: string;
+            path?: string;
+            authInfo?: { email?: string | null };
+          };
+          const parts = [
+            parsed?.error,
+            parsed?.operationType && parsed?.path ? `${parsed.operationType} @ ${parsed.path}` : '',
+            parsed?.authInfo?.email ? `account: ${parsed.authInfo.email} (${session.role})` : ''
+          ].filter(Boolean);
+          if (parts.length > 0) detail = ` (${parts.join(' | ')})`;
         } catch {
           if (err.message) detail = ` (${err.message})`;
         }

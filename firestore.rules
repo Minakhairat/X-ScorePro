@@ -36,8 +36,8 @@ service cloud.firestore {
     function isSuperAdmin() {
       return isVerifiedUser()
         && (
-          request.auth.token.email == 'minakhairat1@gmail.com'
-          || request.auth.token.email == 'minakhairat96@gmail.com'
+          request.auth.token.email.lower() == 'minakhairat1@gmail.com'
+          || request.auth.token.email.lower() == 'minakhairat96@gmail.com'
         );
     }
 
@@ -58,7 +58,7 @@ service cloud.firestore {
       return hasLinkedAdmin()
         && exists(/databases/$(database)/documents/admins/$(linkedAdminKey()))
         && linkedAdminData().active == true
-        && linkedAdminData().email == request.auth.token.email;
+        && linkedAdminData().email.lower() == request.auth.token.email.lower();
     }
 
     function isActiveAssistantAdminRole() {
