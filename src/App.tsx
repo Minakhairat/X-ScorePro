@@ -295,7 +295,11 @@ export default function App() {
         )}
 
         {activeTab === 'logs' && session.role !== 'none' && session.active && currentUser && (
-          <AuditAndArchivesView session={session} uid={currentUser.uid} />
+          <AuditAndArchivesView
+            session={session}
+            uid={currentUser.uid}
+            onDataChanged={refreshAdminWorkspace}
+          />
         )}
       </main>
 

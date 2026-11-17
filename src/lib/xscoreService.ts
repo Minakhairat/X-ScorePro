@@ -971,10 +971,13 @@ export async function addSubAdmin(params: {
 
 export async function updateSubAdminSettings(
   admin: AdminRecord,
-  updates: Partial<Pick<AdminRecord, 'displayName' | 'role' | 'canAssignEmployees' | 'active'>>
+  updates: Partial<
+    Pick<AdminRecord, 'email' | 'displayName' | 'role' | 'canAssignEmployees' | 'active'>
+  >
 ): Promise<void> {
   const path = `admins/${admin.id}`;
   const existingAssignments = await fetchAdminAssignmentsDirectory();
+  const nextEmail = (updates.email ?? admin.email).trim().toLowerCase().slice(0, 120);
   const nextDisplayName = (updates.displayName ?? admin.displayName).trim().slice(0, 80);
   const nextRole = updates.role ?? admin.role;
   const nextCanAssign = updates.canAssignEmployees ?? admin.canAssignEmployees;
@@ -994,6 +997,7 @@ export async function updateSubAdminSettings(
 
   const batch = writeBatch(db);
   batch.update(doc(db, 'admins', admin.id), {
+    email: nextEmail,
     displayName: nextDisplayName,
     role: nextRole,
     canAssignEmployees: nextCanAssign,
@@ -1150,6 +1154,235 @@ export async function fetchMonthlyArchives(): Promise<MonthlyArchiveRecord[]> {
     }));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function updateXScoreLogEntry(params: {
+  log: XScoreAuditLog;
+  nextDelta: number;
+  nextCategory: string;
+  nextReason: string;
+  nextDateLabel: string;
+  syncEmployeeScore: boolean;
+}): Promise<void> {
+  const { log, nextDelta, nextCategory, nextReason, nextDateLabel, syncEmployeeScore } = params;
+  const path = `xscore_logs/${log.id}`;
+  const clampedDelta = Math.max(-1000, Math.min(1000, Math.round(nextDelta)));
+  const cleanCategory = (nextCategory.trim() || log.category || 'تعديل إداري').slice(0, 60);
+  const cleanReason = (nextReason.trim() || log.reason || 'تعديل').slice(0, 200);
+  const cleanDateLabel = nextDateLabel.trim().slice(0, 40);
+
+  const deltaDiff = clampedDelta - (Number(log.delta) || 0);
+  const logNewExcess = Math.max(
+    0,
+    Math.min(100000, (Number(log.previousExcess) || 0) + clampedDelta)
+  );
+  const logNewDiscount = calculateDiscountFromExcess(logNewExcess);
+
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'xscore_logs', log.id), {
+    delta: clampedDelta,
+    newExcess: logNewExcess,
+    newDiscount: logNewDiscount,
+    category: cleanCategory,
+    reason: cleanReason,
+    dateLabel: cleanDateLabel
+  });
+
+  if (syncEmployeeScore && log.employeeId) {
+    const empSnap = await getDoc(doc(db, 'employees', log.employeeId));
+    if (empSnap.exists()) {
+      const empData = empSnap.data() as Omit<Employee, 'id'>;
+      const currentExcess = Number(empData.excessCount) || 0;
+      const updatedEmpExcess = Math.max(0, Math.min(100000, currentExcess + deltaDiff));
+      const updatedEmpDiscount =
+        deltaDiff === 0
+          ? Number(empData.discountPercentage) || 0
+          : calculateDiscountFromExcess(updatedEmpExcess);
+
+      const updatedRecentLogs = (empData.recentLogs || []).map((entry) =>
+        entry.id === log.id
+          ? {
+              ...entry,
+              delta: clampedDelta,
+              category: cleanCategory,
+              reason: cleanReason,
+              dateLabel: cleanDateLabel
+            }
+          : entry
+      );
+
+      batch.update(doc(db, 'employees', log.employeeId), {
+        excessCount: updatedEmpExcess,
+        discountPercentage: updatedEmpDiscount,
+        recentLogs: updatedRecentLogs,
+        updatedAt: serverTimestamp()
+      });
+
+      const [dirItems, dirSnap, statsSnap] = await Promise.all([
+        fetchDirectoryEmployeesIndex(),
+        getDoc(doc(db, 'directory', 'employees_index')),
+        getDoc(doc(db, 'stats', 'summary'))
+      ]);
+
+      if (dirItems.length > 0 && dirSnap.exists()) {
+        const nextDirItems = dirItems.map((item) =>
+          item.id === log.employeeId
+            ? {
+                ...item,
+                excessCount: updatedEmpExcess,
+                discountPercentage: updatedEmpDiscount
+              }
+            : item
+        );
+        const computed = computeSummaryFromItems(nextDirItems);
+        batch.update(doc(db, 'directory', 'employees_index'), {
+          items: nextDirItems,
+          updatedAt: serverTimestamp()
+        });
+        if (statsSnap.exists()) {
+          batch.update(doc(db, 'stats', 'summary'), {
+            totalEmployees: computed.totalEmployees,
+            avgDiscount: computed.avgDiscount,
+            totalExcess: computed.totalExcess,
+            employeesWithExcess: computed.employeesWithExcess,
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+    }
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteXScoreLogEntry(params: {
+  log: XScoreAuditLog;
+  syncEmployeeScore: boolean;
+}): Promise<void> {
+  const { log, syncEmployeeScore } = params;
+  const path = `xscore_logs/${log.id}`;
+  const batch = writeBatch(db);
+
+  batch.delete(doc(db, 'xscore_logs', log.id));
+
+  if (syncEmployeeScore && log.employeeId) {
+    const empSnap = await getDoc(doc(db, 'employees', log.employeeId));
+    if (empSnap.exists()) {
+      const empData = empSnap.data() as Omit<Employee, 'id'>;
+      const currentExcess = Number(empData.excessCount) || 0;
+      const updatedEmpExcess = Math.max(
+        0,
+        Math.min(100000, currentExcess - (Number(log.delta) || 0))
+      );
+      const updatedEmpDiscount = calculateDiscountFromExcess(updatedEmpExcess);
+      const updatedRecentLogs = (empData.recentLogs || []).filter((entry) => entry.id !== log.id);
+
+      batch.update(doc(db, 'employees', log.employeeId), {
+        excessCount: updatedEmpExcess,
+        discountPercentage: updatedEmpDiscount,
+        recentLogs: updatedRecentLogs,
+        updatedAt: serverTimestamp()
+      });
+
+      const [dirItems, dirSnap, statsSnap] = await Promise.all([
+        fetchDirectoryEmployeesIndex(),
+        getDoc(doc(db, 'directory', 'employees_index')),
+        getDoc(doc(db, 'stats', 'summary'))
+      ]);
+
+      if (dirItems.length > 0 && dirSnap.exists()) {
+        const nextDirItems = dirItems.map((item) =>
+          item.id === log.employeeId
+            ? {
+                ...item,
+                excessCount: updatedEmpExcess,
+                discountPercentage: updatedEmpDiscount
+              }
+            : item
+        );
+        const computed = computeSummaryFromItems(nextDirItems);
+        batch.update(doc(db, 'directory', 'employees_index'), {
+          items: nextDirItems,
+          updatedAt: serverTimestamp()
+        });
+        if (statsSnap.exists()) {
+          batch.update(doc(db, 'stats', 'summary'), {
+            totalEmployees: computed.totalEmployees,
+            avgDiscount: computed.avgDiscount,
+            totalExcess: computed.totalExcess,
+            employeesWithExcess: computed.employeesWithExcess,
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+    }
+  }
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function updateMonthlyArchiveRecord(params: {
+  archive: MonthlyArchiveRecord;
+  title: string;
+  records: MonthlyArchiveRecord['records'];
+}): Promise<void> {
+  const { archive, title, records } = params;
+  const path = `monthly_archives/${archive.id}`;
+  const cleanTitle = (title.trim() || archive.title).slice(0, 100);
+  const cleanRecords = records.slice(0, 1000).map((r) => ({
+    id: r.id,
+    code: String(r.code || '').slice(0, 32),
+    name: String(r.name || '').slice(0, 120),
+    excessCount: Math.max(0, Math.min(100000, Math.round(Number(r.excessCount) || 0))),
+    discountPercentage: Math.max(0, Math.min(100, Math.round(Number(r.discountPercentage) || 0)))
+  }));
+
+  let totalExcess = 0;
+  let totalDiscount = 0;
+  let discountCount = 0;
+  let penalizedEmployees = 0;
+
+  for (const r of cleanRecords) {
+    totalExcess += r.excessCount;
+    if (r.excessCount > 0 || r.discountPercentage > 0) {
+      penalizedEmployees += 1;
+    }
+    if (r.discountPercentage > 0) {
+      totalDiscount += r.discountPercentage;
+      discountCount += 1;
+    }
+  }
+
+  const avgDiscount = discountCount > 0 ? Math.round(totalDiscount / discountCount) : 0;
+
+  try {
+    await updateDoc(doc(db, 'monthly_archives', archive.id), {
+      title: cleanTitle,
+      records: cleanRecords,
+      penalizedEmployees,
+      totalExcess,
+      avgDiscount
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteMonthlyArchiveRecord(archiveId: string): Promise<void> {
+  const path = `monthly_archives/${archiveId}`;
+  try {
+    await deleteDoc(doc(db, 'monthly_archives', archiveId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 

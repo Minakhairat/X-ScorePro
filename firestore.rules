@@ -189,7 +189,8 @@ service cloud.firestore {
         && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 200
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 60
         && data.dateLabel is string && data.dateLabel.size() <= 40
-        && data.recordedByUid is string && data.recordedByUid == request.auth.uid && data.recordedByUid.size() <= 128
+        && data.recordedByUid is string && data.recordedByUid.size() <= 128
+        && (isSuperAdmin() || data.recordedByUid == request.auth.uid)
         && data.recordedByName is string && data.recordedByName.size() >= 1 && data.recordedByName.size() <= 80
         && data.recordedByRole is string && data.recordedByRole.size() >= 1 && data.recordedByRole.size() <= 32
         && data.createdAt is timestamp;
@@ -211,7 +212,8 @@ service cloud.firestore {
         && data.avgDiscount is number && data.avgDiscount >= 0 && data.avgDiscount <= 100
         && data.records is list && data.records.size() <= 1000
         && (data.records.size() == 0 || data.records[0] is map)
-        && data.closedByUid is string && data.closedByUid == request.auth.uid && data.closedByUid.size() <= 128
+        && data.closedByUid is string && data.closedByUid.size() <= 128
+        && (isSuperAdmin() || data.closedByUid == request.auth.uid)
         && data.closedByName is string && data.closedByName.size() >= 1 && data.closedByName.size() <= 80
         && data.createdAt is timestamp;
     }
@@ -407,6 +409,7 @@ service cloud.firestore {
 
       allow create: if isValidId(logId)
         && isValidXScoreLog(incoming())
+        && incoming().recordedByUid == request.auth.uid
         && incoming().createdAt == request.time
         && exists(/databases/$(database)/documents/employees/$(incoming().employeeId))
         && (
@@ -415,7 +418,13 @@ service cloud.firestore {
           || isAssignedToEmployee(incoming().employeeId)
         );
 
-      allow update: if false;
+      allow update: if isValidId(logId)
+        && isValidXScoreLog(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().employeeId == existing().employeeId
+        && incoming().recordedByUid == existing().recordedByUid
+        && isSuperAdmin();
+
       allow delete: if isValidId(logId) && isSuperAdmin();
     }
 
@@ -425,10 +434,16 @@ service cloud.firestore {
 
       allow create: if isValidId(archiveId)
         && isValidMonthlyArchive(incoming())
+        && incoming().closedByUid == request.auth.uid
         && incoming().createdAt == request.time
         && isSuperAdmin();
 
-      allow update: if false;
+      allow update: if isValidId(archiveId)
+        && isValidMonthlyArchive(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().closedByUid == existing().closedByUid
+        && isSuperAdmin();
+
       allow delete: if isValidId(archiveId) && isSuperAdmin();
     }
   }

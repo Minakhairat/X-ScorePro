@@ -9,7 +9,8 @@ import {
   X,
   CheckCircle2,
   AlertTriangle,
-  Power
+  Power,
+  Edit3
 } from 'lucide-react';
 import {
   type AdminAssignmentDirectoryItem,
@@ -62,6 +63,14 @@ export function AdminManagementView({
   const [previousIds, setPreviousIds] = useState<string[]>([]);
   const [pickerSearch, setPickerSearch] = useState('');
   const [savingPicker, setSavingPicker] = useState(false);
+
+  // Edit Sub-Admin Modal State (Super Admin only)
+  const [editingAdmin, setEditingAdmin] = useState<AdminRecord | null>(null);
+  const [editEmail, setEditEmail] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editRole, setEditRole] = useState<'assistant_admin' | 'supervisor'>('supervisor');
+  const [editActive, setEditActive] = useState(true);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -141,6 +150,37 @@ export function AdminManagementView({
       await loadAll();
     } catch {
       setFeedback({ type: 'error', text: 'تعذر تغيير الدور.' });
+    }
+  }
+
+  function openEditAdminModal(admin: AdminRecord) {
+    setEditingAdmin(admin);
+    setEditEmail(admin.email);
+    setEditName(admin.displayName);
+    setEditRole(admin.role);
+    setEditActive(admin.active);
+  }
+
+  async function handleSaveEditAdmin(e: FormEvent) {
+    e.preventDefault();
+    if (!editingAdmin || !editEmail.trim() || !editName.trim()) return;
+    setSavingEdit(true);
+    setFeedback(null);
+    try {
+      await updateSubAdminSettings(editingAdmin, {
+        email: editEmail,
+        displayName: editName,
+        role: editRole,
+        canAssignEmployees: editRole === 'assistant_admin',
+        active: editActive
+      });
+      setEditingAdmin(null);
+      await loadAll();
+      setFeedback({ type: 'success', text: 'تم تحديث بيانات المشرف / الأدمن المساعد بنجاح.' });
+    } catch {
+      setFeedback({ type: 'error', text: 'تعذر تحديث البيانات. تأكد من صحة البريد الإلكتروني.' });
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -458,6 +498,16 @@ export function AdminManagementView({
                     <>
                       <button
                         type="button"
+                        onClick={() => openEditAdminModal(item.record!)}
+                        title="تعديل بيانات المشرف / الأدمن المساعد"
+                        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer whitespace-nowrap"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>تعديل</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => void handleToggleRole(item.record!)}
                         className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer whitespace-nowrap"
                       >
@@ -606,6 +656,98 @@ export function AdminManagementView({
                 {savingPicker ? 'جاري الحفظ...' : `حفظ الاختيارات (${selectedIds.size})`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Super Admin Only: Edit Admin Modal */}
+      {editingAdmin && isSuperAdmin && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white border border-slate-200 rounded-xl w-full max-w-md max-h-[92dvh] overflow-y-auto shadow-xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
+              <h3 className="text-base font-bold text-slate-900">
+                تعديل بيانات المشرف / الأدمن المساعد
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingAdmin(null)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEditAdmin} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                  الاسم الظاهر
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={80}
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:border-red-600 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                  البريد الإلكتروني (Google Gmail)
+                </label>
+                <input
+                  type="email"
+                  required
+                  dir="ltr"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:border-red-600 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                  مستوى الصلاحية
+                </label>
+                <select
+                  value={editRole}
+                  onChange={(e) =>
+                    setEditRole(e.target.value as 'assistant_admin' | 'supervisor')
+                  }
+                  className="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-sm focus:border-red-600 focus:outline-none"
+                >
+                  <option value="supervisor">مشرف محدد (يتحكم في أفراد معينين)</option>
+                  <option value="assistant_admin">أدمن مساعد (كل الموظفين + إضافة موظفين)</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editActive}
+                  onChange={(e) => setEditActive(e.target.checked)}
+                  className="rounded border-slate-300 text-red-600 focus:ring-red-600"
+                />
+                <span>الحساب نشط (مسموح له بالدخول)</span>
+              </label>
+              <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingAdmin(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold text-slate-700 cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-5 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-60 cursor-pointer"
+                >
+                  {savingEdit ? 'جاري الحفظ...' : 'حفظ التعديلات'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
