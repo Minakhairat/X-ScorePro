@@ -346,7 +346,8 @@ export function AdminConsoleView({
       const res = await importEmployeesFromExcelRows({
         rows: mappedExcelRows,
         mode: excelImportMode,
-        cycleLabel: summary?.cycleLabel || 'الدورة الحالية'
+        cycleLabel: summary?.cycleLabel || 'الدورة الحالية',
+        isSuperAdmin
       });
       setExcelModalOpen(false);
       setParsedSheet(null);
@@ -355,10 +356,19 @@ export function AdminConsoleView({
         type: 'success',
         text: `تم استيراد ملف الإكسيل: إضافة ${res.createdCount} موظف، تحديث ${res.updatedCount}، وتخطي ${res.skippedCount}.`
       });
-    } catch {
+    } catch (err) {
+      let detail = '';
+      if (err instanceof Error) {
+        try {
+          const parsed = JSON.parse(err.message) as { error?: string };
+          if (parsed?.error) detail = ` (${parsed.error})`;
+        } catch {
+          if (err.message) detail = ` (${err.message})`;
+        }
+      }
       setFeedback({
         type: 'error',
-        text: 'حدث خطأ أثناء رفع بيانات ملف الإكسيل إلى Firebase.'
+        text: `حدث خطأ أثناء رفع بيانات ملف الإكسيل إلى Firebase${detail}.`
       });
     } finally {
       setBusyAction(null);

@@ -18,6 +18,7 @@ import { db, handleFirestoreError, OperationType } from './firebase';
 import {
   calculateDiscountFromExcess,
   DEFAULT_DEPARTMENTS,
+  isSuperAdminEmail,
   SUPER_ADMIN_EMAIL,
   type AdminAssignmentDirectoryItem,
   type AdminRecord,
@@ -193,7 +194,7 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
 
   const email = user.email.toLowerCase();
 
-  if (email === SUPER_ADMIN_EMAIL) {
+  if (isSuperAdminEmail(email)) {
     return {
       role: 'super_admin',
       adminKey: 'super_admin',
@@ -385,7 +386,11 @@ export async function recordEmployeeXScore(params: {
 
   const updatedLogs = [entry, ...(employee.recentLogs || [])].slice(0, 50);
 
-  const dirItems = await fetchDirectoryEmployeesIndex();
+  const [dirItems, dirSnap, statsSnap] = await Promise.all([
+    fetchDirectoryEmployeesIndex(),
+    getDoc(doc(db, 'directory', 'employees_index')),
+    getDoc(doc(db, 'stats', 'summary'))
+  ]);
   const updatedItems = dirItems.map((item) =>
     item.id === employee.id
       ? { ...item, excessCount: newExcess, discountPercentage: newDiscount }
@@ -420,19 +425,31 @@ export async function recordEmployeeXScore(params: {
     createdAt: serverTimestamp()
   });
 
-  if (dirItems.length > 0) {
+  if (dirItems.length > 0 && dirSnap.exists()) {
     batch.update(doc(db, 'directory', 'employees_index'), {
       items: updatedItems,
       updatedAt: serverTimestamp()
     });
   }
 
-  batch.update(doc(db, 'stats', 'summary'), {
-    avgDiscount: stats.avgDiscount,
-    totalExcess: stats.totalExcess,
-    employeesWithExcess: stats.employeesWithExcess,
-    updatedAt: serverTimestamp()
-  });
+  if (statsSnap.exists()) {
+    batch.update(doc(db, 'stats', 'summary'), {
+      avgDiscount: stats.avgDiscount,
+      totalExcess: stats.totalExcess,
+      employeesWithExcess: stats.employeesWithExcess,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    batch.set(doc(db, 'stats', 'summary'), {
+      totalEmployees: stats.totalEmployees || 1,
+      avgDiscount: stats.avgDiscount,
+      totalExcess: stats.totalExcess,
+      employeesWithExcess: stats.employeesWithExcess,
+      seedInitialized: true,
+      cycleLabel: 'الدورة الحالية',
+      updatedAt: serverTimestamp()
+    });
+  }
 
   try {
     await batch.commit();
@@ -519,35 +536,108 @@ export async function createOrUpdateEmployee(params: {
 
   if (existingEmployee) {
     const path = `employees/${existingEmployee.id}`;
-    const updatedItems = dirItems.map((item) =>
-      item.id === existingEmployee.id
-        ? {
-            ...item,
-            code: isSuperAdmin ? trimmedCode : item.code,
+    const [dirSnap, empSnap, statsSnap] = await Promise.all([
+      getDoc(doc(db, 'directory', 'employees_index')),
+      getDoc(doc(db, 'employees', existingEmployee.id)),
+      getDoc(doc(db, 'stats', 'summary'))
+    ]);
+    const nextCode = isSuperAdmin ? trimmedCode : existingEmployee.code;
+    const foundInDir = dirItems.some((item) => item.id === existingEmployee.id);
+    const updatedItems = foundInDir
+      ? dirItems.map((item) =>
+          item.id === existingEmployee.id
+            ? {
+                ...item,
+                code: nextCode,
+                name: trimmedName,
+                department: trimmedDept
+              }
+            : item
+        )
+      : [
+          ...dirItems,
+          {
+            id: existingEmployee.id,
+            serial: existingEmployee.serial,
+            code: nextCode,
             name: trimmedName,
-            department: trimmedDept
+            department: trimmedDept,
+            excessCount: existingEmployee.excessCount,
+            discountPercentage: existingEmployee.discountPercentage
           }
-        : item
-    );
+        ];
+
     const batch = writeBatch(db);
-    if (isSuperAdmin) {
-      batch.update(doc(db, 'employees', existingEmployee.id), {
-        code: trimmedCode,
-        name: trimmedName,
-        department: trimmedDept,
-        updatedAt: serverTimestamp()
-      });
+    if (empSnap.exists()) {
+      if (isSuperAdmin) {
+        batch.update(doc(db, 'employees', existingEmployee.id), {
+          code: trimmedCode,
+          name: trimmedName,
+          department: trimmedDept,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        batch.update(doc(db, 'employees', existingEmployee.id), {
+          name: trimmedName,
+          department: trimmedDept,
+          updatedAt: serverTimestamp()
+        });
+      }
     } else {
-      batch.update(doc(db, 'employees', existingEmployee.id), {
+      batch.set(doc(db, 'employees', existingEmployee.id), {
+        serial: Math.max(0, Math.min(1000000, Math.round(Number(existingEmployee.serial) || 1))),
+        code: nextCode,
         name: trimmedName,
         department: trimmedDept,
+        excessCount: Math.max(0, Math.min(100000, Math.round(Number(existingEmployee.excessCount) || 0))),
+        discountPercentage: Math.max(
+          0,
+          Math.min(100, Math.round(Number(existingEmployee.discountPercentage) || 0))
+        ),
+        recentLogs: Array.isArray(existingEmployee.recentLogs)
+          ? existingEmployee.recentLogs.slice(0, 50)
+          : [],
+        assignedAdminKeys: Array.isArray(existingEmployee.assignedAdminKeys)
+          ? existingEmployee.assignedAdminKeys.slice(0, 15)
+          : [],
+        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
     }
-    batch.update(doc(db, 'directory', 'employees_index'), {
-      items: updatedItems,
-      updatedAt: serverTimestamp()
-    });
+
+    if (dirSnap.exists()) {
+      batch.update(doc(db, 'directory', 'employees_index'), {
+        items: updatedItems.slice(0, 2000),
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      batch.set(doc(db, 'directory', 'employees_index'), {
+        items: updatedItems.slice(0, 2000),
+        updatedAt: serverTimestamp()
+      });
+    }
+
+    if (!empSnap.exists()) {
+      const stats = computeSummaryFromItems(updatedItems);
+      if (statsSnap.exists()) {
+        batch.update(doc(db, 'stats', 'summary'), {
+          totalEmployees: stats.totalEmployees,
+          avgDiscount: stats.avgDiscount,
+          totalExcess: stats.totalExcess,
+          employeesWithExcess: stats.employeesWithExcess,
+          seedInitialized: true,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        batch.set(doc(db, 'stats', 'summary'), {
+          ...stats,
+          seedInitialized: true,
+          cycleLabel: 'الدورة الحالية',
+          updatedAt: serverTimestamp()
+        });
+      }
+    }
+
     try {
       await batch.commit();
     } catch (error) {
@@ -555,7 +645,7 @@ export async function createOrUpdateEmployee(params: {
     }
     return {
       ...existingEmployee,
-      code: isSuperAdmin ? trimmedCode : existingEmployee.code,
+      code: nextCode,
       name: trimmedName,
       department: trimmedDept
     };
@@ -664,15 +754,90 @@ export async function createOrUpdateEmployee(params: {
   return newEmployee;
 }
 
+export async function syncDirectoryAndStatsFromEmployees(
+  providedEmployees?: Employee[]
+): Promise<StatsSummary> {
+  let employees = providedEmployees;
+  if (!employees) {
+    try {
+      const snap = await getDocs(collection(db, 'employees'));
+      employees = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Employee, 'id'>)
+      }));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'employees');
+    }
+  }
+
+  const dirItems: DirectoryEmployeeItem[] = employees
+    .map((e) => ({
+      id: e.id,
+      serial: Number(e.serial) || 0,
+      code: String(e.code || '').slice(0, 32),
+      name: String(e.name || '').slice(0, 120),
+      department: String(e.department || 'عام').slice(0, 80),
+      excessCount: Math.max(0, Math.round(Number(e.excessCount) || 0)),
+      discountPercentage: Math.max(0, Math.min(100, Math.round(Number(e.discountPercentage) || 0)))
+    }))
+    .sort((a, b) => a.serial - b.serial)
+    .slice(0, 2000);
+
+  const computed = computeSummaryFromItems(dirItems);
+  const [statsSnap, assignSnap] = await Promise.all([
+    getDoc(doc(db, 'stats', 'summary')),
+    getDoc(doc(db, 'directory', 'admin_assignments'))
+  ]);
+
+  const rawCycle = statsSnap.exists() ? statsSnap.data()?.cycleLabel : '';
+  const cycleLabel =
+    (typeof rawCycle === 'string' && rawCycle.trim() ? rawCycle.trim() : 'الدورة الحالية').slice(
+      0,
+      60
+    ) || 'الدورة الحالية';
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'directory', 'employees_index'), {
+    items: dirItems,
+    updatedAt: serverTimestamp()
+  });
+
+  if (!assignSnap.exists()) {
+    batch.set(doc(db, 'directory', 'admin_assignments'), {
+      items: [],
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  batch.set(doc(db, 'stats', 'summary'), {
+    ...computed,
+    seedInitialized: dirItems.length > 0,
+    cycleLabel,
+    updatedAt: serverTimestamp()
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'directory/employees_index');
+  }
+
+  return {
+    ...computed,
+    seedInitialized: dirItems.length > 0,
+    cycleLabel
+  };
+}
+
 export async function importEmployeesFromExcelRows(params: {
   rows: ExcelEmployeeImportRow[];
   mode: 'merge' | 'add_new_only';
   cycleLabel?: string;
+  isSuperAdmin?: boolean;
 }): Promise<{ createdCount: number; updatedCount: number; skippedCount: number; summary: StatsSummary }> {
-  const { rows, mode, cycleLabel = 'الدورة الحالية' } = params;
+  const { rows, mode, cycleLabel = 'الدورة الحالية', isSuperAdmin = false } = params;
 
-  const [existingDirItems, dirSnap, statsSnap, assignSnap] = await Promise.all([
-    fetchDirectoryEmployeesIndex(),
+  const [dirSnap, statsSnap, assignSnap] = await Promise.all([
     getDoc(doc(db, 'directory', 'employees_index')),
     getDoc(doc(db, 'stats', 'summary')),
     getDoc(doc(db, 'directory', 'admin_assignments'))
@@ -680,9 +845,39 @@ export async function importEmployeesFromExcelRows(params: {
 
   const itemMap = new Map<string, DirectoryEmployeeItem>();
   let maxSerial = 0;
-  for (const item of existingDirItems) {
-    itemMap.set(item.id, item);
-    if (item.serial > maxSerial) maxSerial = item.serial;
+
+  if (isSuperAdmin) {
+    // Source of truth is the live `employees` collection so deleted docs are never treated as existing
+    try {
+      const actualSnap = await getDocs(collection(db, 'employees'));
+      for (const d of actualSnap.docs) {
+        const data = d.data() as Omit<Employee, 'id'>;
+        const serial = Math.max(0, Math.min(1000000, Math.round(Number(data.serial) || 0)));
+        if (serial > maxSerial) maxSerial = serial;
+        itemMap.set(d.id, {
+          id: d.id,
+          serial,
+          code: String(data.code || '').slice(0, 32),
+          name: String(data.name || '').slice(0, 120),
+          department: String(data.department || 'عام').slice(0, 80),
+          excessCount: Math.max(0, Math.min(100000, Math.round(Number(data.excessCount) || 0))),
+          discountPercentage: Math.max(
+            0,
+            Math.min(100, Math.round(Number(data.discountPercentage) || 0))
+          )
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'employees');
+    }
+  } else {
+    const existingDirItems = dirSnap.exists()
+      ? ((dirSnap.data().items || []) as DirectoryEmployeeItem[])
+      : [];
+    for (const item of existingDirItems) {
+      itemMap.set(item.id, item);
+      if (item.serial > maxSerial) maxSerial = item.serial;
+    }
   }
 
   let createdCount = 0;
@@ -704,22 +899,28 @@ export async function importEmployeesFromExcelRows(params: {
   >();
 
   for (const row of rows) {
-    const cleanName = row.name.trim().slice(0, 120);
+    const cleanName = String(row.name ?? '').trim().slice(0, 120);
     if (!cleanName) {
       skippedCount += 1;
       continue;
     }
 
-    const cleanCode = row.code.trim().slice(0, 32);
-    const cleanDept = (row.department.trim() || 'عام').slice(0, 80);
-    const cleanExcess = Math.max(0, Math.min(100000, Math.round(Number(row.excessCount) || 0)));
-    const cleanDiscount = Math.max(
-      0,
-      Math.min(100, Math.round(Number(row.discountPercentage) ?? calculateDiscountFromExcess(cleanExcess)))
-    );
+    const cleanCode = String(row.code ?? '').trim().slice(0, 32);
+    const cleanDept = (String(row.department ?? '').trim() || 'عام').slice(0, 80);
+    const rawExcess = Number(row.excessCount);
+    const cleanExcess = Number.isFinite(rawExcess)
+      ? Math.max(0, Math.min(100000, Math.round(rawExcess)))
+      : 0;
+    const rawDiscount = Number(row.discountPercentage);
+    const cleanDiscount = Number.isFinite(rawDiscount)
+      ? Math.max(0, Math.min(100, Math.round(rawDiscount)))
+      : calculateDiscountFromExcess(cleanExcess);
 
-    const candidateSerial =
-      row.serial && row.serial > 0 ? Math.round(row.serial) : maxSerial + 1;
+    const rawSerial = Number(row.serial);
+    const hasValidRowSerial = Number.isFinite(rawSerial) && rawSerial > 0 && rawSerial <= 1000000;
+    const candidateSerial = hasValidRowSerial
+      ? Math.round(rawSerial)
+      : Math.min(1000000, maxSerial + 1);
     const empId = makeEmployeeDocId(cleanCode, candidateSerial);
     const existing = itemMap.get(empId);
 
@@ -730,11 +931,11 @@ export async function importEmployeesFromExcelRows(params: {
 
     let assignedSerial = existing ? existing.serial : candidateSerial;
     if (!existing) {
-      if (!row.serial || row.serial <= 0) {
-        maxSerial += 1;
+      if (!hasValidRowSerial) {
+        maxSerial = Math.min(1000000, maxSerial + 1);
         assignedSerial = maxSerial;
-      } else if (row.serial > maxSerial) {
-        maxSerial = row.serial;
+      } else if (candidateSerial > maxSerial) {
+        maxSerial = candidateSerial;
       }
     }
 
@@ -757,6 +958,32 @@ export async function importEmployeesFromExcelRows(params: {
       excessCount: cleanExcess,
       discountPercentage: cleanDiscount
     });
+  }
+
+  // For assistant admins (who cannot list /employees), verify each candidate update doc actually exists in Firestore
+  // so deleting /employees from Firebase Console never causes NOT_FOUND on batch.update().
+  if (!isSuperAdmin) {
+    const updateEntries = Array.from(pendingWrites.entries()).filter(([, entry]) => entry.isUpdate);
+    const verifyChunkSize = 50;
+    for (let i = 0; i < updateEntries.length; i += verifyChunkSize) {
+      const slice = updateEntries.slice(i, i + verifyChunkSize);
+      const checks = await Promise.all(
+        slice.map(async ([empId]) => {
+          try {
+            const snap = await getDoc(doc(db, 'employees', empId));
+            return { empId, exists: snap.exists() };
+          } catch {
+            return { empId, exists: false };
+          }
+        })
+      );
+      for (const { empId, exists } of checks) {
+        if (!exists) {
+          const entry = pendingWrites.get(empId);
+          if (entry) entry.isUpdate = false;
+        }
+      }
+    }
   }
 
   const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
@@ -797,9 +1024,12 @@ export async function importEmployeesFromExcelRows(params: {
     .slice(0, 2000);
 
   const computed = computeSummaryFromItems(finalItems);
+  const rawCycle = statsSnap.exists() ? statsSnap.data()?.cycleLabel : '';
   const nextCycleLabel =
-    (statsSnap.exists() ? (statsSnap.data() as StatsSummary).cycleLabel : cycleLabel).slice(0, 60) ||
-    'الدورة الحالية';
+    (typeof rawCycle === 'string' && rawCycle.trim()
+      ? rawCycle.trim()
+      : cycleLabel || 'الدورة الحالية'
+    ).slice(0, 60) || 'الدورة الحالية';
 
   operations.push((batch) => {
     if (dirSnap.exists()) {
@@ -831,13 +1061,13 @@ export async function importEmployeesFromExcelRows(params: {
         avgDiscount: computed.avgDiscount,
         totalExcess: computed.totalExcess,
         employeesWithExcess: computed.employeesWithExcess,
-        seedInitialized: true,
+        seedInitialized: finalItems.length > 0,
         updatedAt: serverTimestamp()
       });
     } else {
       batch.set(doc(db, 'stats', 'summary'), {
         ...computed,
-        seedInitialized: true,
+        seedInitialized: finalItems.length > 0,
         cycleLabel: nextCycleLabel,
         updatedAt: serverTimestamp()
       });
@@ -864,7 +1094,7 @@ export async function importEmployeesFromExcelRows(params: {
     skippedCount,
     summary: {
       ...computed,
-      seedInitialized: true,
+      seedInitialized: finalItems.length > 0,
       cycleLabel: nextCycleLabel
     }
   };
@@ -872,23 +1102,44 @@ export async function importEmployeesFromExcelRows(params: {
 
 export async function deleteEmployeeRecord(employeeId: string): Promise<void> {
   const path = `employees/${employeeId}`;
-  const dirItems = await fetchDirectoryEmployeesIndex();
+  const [dirItems, dirSnap, statsSnap] = await Promise.all([
+    fetchDirectoryEmployeesIndex(),
+    getDoc(doc(db, 'directory', 'employees_index')),
+    getDoc(doc(db, 'stats', 'summary'))
+  ]);
   const updatedItems = dirItems.filter((item) => item.id !== employeeId);
   const stats = computeSummaryFromItems(updatedItems);
 
   const batch = writeBatch(db);
   batch.delete(doc(db, 'employees', employeeId));
-  batch.update(doc(db, 'directory', 'employees_index'), {
-    items: updatedItems,
-    updatedAt: serverTimestamp()
-  });
-  batch.update(doc(db, 'stats', 'summary'), {
-    totalEmployees: stats.totalEmployees,
-    avgDiscount: stats.avgDiscount,
-    totalExcess: stats.totalExcess,
-    employeesWithExcess: stats.employeesWithExcess,
-    updatedAt: serverTimestamp()
-  });
+  if (dirSnap.exists()) {
+    batch.update(doc(db, 'directory', 'employees_index'), {
+      items: updatedItems,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    batch.set(doc(db, 'directory', 'employees_index'), {
+      items: updatedItems,
+      updatedAt: serverTimestamp()
+    });
+  }
+
+  if (statsSnap.exists()) {
+    batch.update(doc(db, 'stats', 'summary'), {
+      totalEmployees: stats.totalEmployees,
+      avgDiscount: stats.avgDiscount,
+      totalExcess: stats.totalExcess,
+      employeesWithExcess: stats.employeesWithExcess,
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    batch.set(doc(db, 'stats', 'summary'), {
+      ...stats,
+      seedInitialized: updatedItems.length > 0,
+      cycleLabel: 'الدورة الحالية',
+      updatedAt: serverTimestamp()
+    });
+  }
 
   try {
     await batch.commit();
@@ -1571,18 +1822,41 @@ export async function closeMonthlyCycleAndArchive(params: {
     }));
 
     try {
+      const [dirSnap, statsSnap] = await Promise.all([
+        getDoc(doc(db, 'directory', 'employees_index')),
+        getDoc(doc(db, 'stats', 'summary'))
+      ]);
       const metaBatch = writeBatch(db);
-      metaBatch.update(doc(db, 'directory', 'employees_index'), {
-        items: cleanItems,
-        updatedAt: serverTimestamp()
-      });
-      metaBatch.update(doc(db, 'stats', 'summary'), {
-        avgDiscount: 0,
-        totalExcess: 0,
-        employeesWithExcess: 0,
-        cycleLabel: nextCycleLabel.trim().slice(0, 60) || 'دورة جديدة',
-        updatedAt: serverTimestamp()
-      });
+      if (dirSnap.exists()) {
+        metaBatch.update(doc(db, 'directory', 'employees_index'), {
+          items: cleanItems,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        metaBatch.set(doc(db, 'directory', 'employees_index'), {
+          items: cleanItems,
+          updatedAt: serverTimestamp()
+        });
+      }
+      if (statsSnap.exists()) {
+        metaBatch.update(doc(db, 'stats', 'summary'), {
+          avgDiscount: 0,
+          totalExcess: 0,
+          employeesWithExcess: 0,
+          cycleLabel: nextCycleLabel.trim().slice(0, 60) || 'دورة جديدة',
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        metaBatch.set(doc(db, 'stats', 'summary'), {
+          totalEmployees: cleanItems.length,
+          avgDiscount: 0,
+          totalExcess: 0,
+          employeesWithExcess: 0,
+          seedInitialized: cleanItems.length > 0,
+          cycleLabel: nextCycleLabel.trim().slice(0, 60) || 'دورة جديدة',
+          updatedAt: serverTimestamp()
+        });
+      }
       await metaBatch.commit();
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'stats/summary');

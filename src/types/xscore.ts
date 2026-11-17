@@ -1,4 +1,11 @@
 export const SUPER_ADMIN_EMAIL = 'minakhairat1@gmail.com';
+export const SUPER_ADMIN_EMAILS = ['minakhairat1@gmail.com', 'minakhairat96@gmail.com'] as const;
+
+export function isSuperAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  return (SUPER_ADMIN_EMAILS as readonly string[]).includes(normalized);
+}
 
 export const DEFAULT_EXCESS_ALERT_THRESHOLD = 15;
 export const EXCESS_THRESHOLD_OPTIONS = [10, 15, 20, 25, 30] as const;

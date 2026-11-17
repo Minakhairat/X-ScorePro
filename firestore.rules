@@ -34,7 +34,11 @@ service cloud.firestore {
     }
 
     function isSuperAdmin() {
-      return isVerifiedUser() && request.auth.token.email == 'minakhairat1@gmail.com';
+      return isVerifiedUser()
+        && (
+          request.auth.token.email == 'minakhairat1@gmail.com'
+          || request.auth.token.email == 'minakhairat96@gmail.com'
+        );
     }
 
     function hasLinkedAdmin() {

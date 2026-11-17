@@ -17,6 +17,7 @@ import {
   testFirestoreConnection
 } from './lib/firebase';
 import {
+  computeSummaryFromItems,
   fetchAllEmployeesForSuperAdmin,
   fetchAssignedEmployeesByIds,
   fetchDepartments,
@@ -24,7 +25,8 @@ import {
   fetchStatsSummary,
   getDefaultDepartmentItems,
   getEmptySummary,
-  resolveAdminSession
+  resolveAdminSession,
+  syncDirectoryAndStatsFromEmployees
 } from './lib/xscoreService';
 import {
   type AdminSession,
@@ -95,6 +97,26 @@ export default function App() {
       if (activeSession.role === 'super_admin') {
         const list = await fetchAllEmployeesForSuperAdmin();
         setAdminEmployees(list);
+
+        // Automatically reconcile directory/employees_index & stats/summary if /employees was modified/deleted in Firebase Console
+        try {
+          const liveComputed = computeSummaryFromItems(list);
+          const currentSummary = await fetchStatsSummary();
+          const dirItems = await fetchDirectoryEmployeesIndex();
+          const needsSync =
+            !currentSummary ||
+            currentSummary.totalEmployees !== liveComputed.totalEmployees ||
+            currentSummary.totalExcess !== liveComputed.totalExcess ||
+            currentSummary.employeesWithExcess !== liveComputed.employeesWithExcess ||
+            dirItems.length !== list.length;
+
+          if (needsSync) {
+            const synced = await syncDirectoryAndStatsFromEmployees(list);
+            setSummary(synced);
+          }
+        } catch (syncErr) {
+          console.warn('Auto-sync directory/stats skipped:', syncErr);
+        }
       } else if (activeSession.role === 'assistant_admin') {
         const dirItems = await fetchDirectoryEmployeesIndex();
         setAdminEmployees(
