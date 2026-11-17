@@ -210,7 +210,8 @@ export default function App() {
           setActiveTab((prev) => (prev === 'admins_rbac' ? 'admin' : prev));
         }
 
-        await Promise.all([loadSummary(), loadAdminEmployees(resolved)]);
+        await loadAdminEmployees(resolved);
+        await loadSummary();
       } catch (err) {
         console.error('Auth resolution error:', err);
         setAuthNotice('تعذر التحقق من صلاحيات الحساب. يرجى المحاولة مرة أخرى.');
@@ -249,7 +250,8 @@ export default function App() {
     if (!currentUser) return;
     const freshSession = await resolveAdminSession(currentUser);
     setSession(freshSession);
-    await Promise.all([loadSummary(), loadAdminEmployees(freshSession)]);
+    await loadAdminEmployees(freshSession);
+    await loadSummary();
   }, [currentUser, loadAdminEmployees, loadSummary]);
 
   function canQuickRecordFor(emp: Employee): boolean {

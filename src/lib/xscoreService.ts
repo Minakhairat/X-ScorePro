@@ -999,24 +999,50 @@ export async function importEmployeesFromExcelRows(params: {
     }
   }
 
-  const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+  type EmpWriteOp = {
+    empId: string;
+    isUpdate: boolean;
+    payload: Record<string, unknown>;
+    debugMeta: {
+      serial: number;
+      codeLen: number;
+      nameLen: number;
+      deptLen: number;
+      excessCount: number;
+      discountPercentage: number;
+    };
+  };
+
+  const empWriteOps: EmpWriteOp[] = [];
 
   for (const [empId, entry] of pendingWrites.entries()) {
     if (entry.isUpdate) {
       updatedCount += 1;
-      operations.push((batch) =>
-        batch.update(doc(db, 'employees', empId), {
+      empWriteOps.push({
+        empId,
+        isUpdate: true,
+        payload: {
           name: entry.name,
           department: entry.department,
           excessCount: entry.excessCount,
           discountPercentage: entry.discountPercentage,
           updatedAt: serverTimestamp()
-        })
-      );
+        },
+        debugMeta: {
+          serial: entry.serial,
+          codeLen: entry.code.length,
+          nameLen: entry.name.length,
+          deptLen: entry.department.length,
+          excessCount: entry.excessCount,
+          discountPercentage: entry.discountPercentage
+        }
+      });
     } else {
       createdCount += 1;
-      operations.push((batch) =>
-        batch.set(doc(db, 'employees', empId), {
+      empWriteOps.push({
+        empId,
+        isUpdate: false,
+        payload: {
           serial: entry.serial,
           code: entry.code,
           name: entry.name,
@@ -1027,8 +1053,16 @@ export async function importEmployeesFromExcelRows(params: {
           assignedAdminKeys: [],
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
-        })
-      );
+        },
+        debugMeta: {
+          serial: entry.serial,
+          codeLen: entry.code.length,
+          nameLen: entry.name.length,
+          deptLen: entry.department.length,
+          excessCount: entry.excessCount,
+          discountPercentage: entry.discountPercentage
+        }
+      });
     }
   }
 
@@ -1044,39 +1078,75 @@ export async function importEmployeesFromExcelRows(params: {
       : cycleLabel || 'الدورة الحالية'
     ).slice(0, 60) || 'الدورة الحالية';
 
-  operations.push((batch) => {
+  // Step 1: Write employees in modest batches (25 for super_admin, 4 for assistant_admin to stay well under rule limits)
+  const chunkSize = isSuperAdmin ? 25 : 4;
+  for (let i = 0; i < empWriteOps.length; i += chunkSize) {
+    const slice = empWriteOps.slice(i, i + chunkSize);
+    const batch = writeBatch(db);
+    for (const op of slice) {
+      if (op.isUpdate) {
+        batch.update(doc(db, 'employees', op.empId), op.payload);
+      } else {
+        batch.set(doc(db, 'employees', op.empId), op.payload);
+      }
+    }
+    try {
+      await batch.commit();
+    } catch {
+      // Fallback to per-doc write to either succeed individually or pinpoint exact failing doc/fields
+      for (const op of slice) {
+        const docPath = `employees/${op.empId}`;
+        try {
+          if (op.isUpdate) {
+            await updateDoc(doc(db, 'employees', op.empId), op.payload);
+          } else {
+            await setDoc(doc(db, 'employees', op.empId), op.payload);
+          }
+        } catch (singleErr) {
+          handleFirestoreError(
+            singleErr,
+            op.isUpdate ? OperationType.UPDATE : OperationType.CREATE,
+            `${docPath} (serial=${op.debugMeta.serial}, codeLen=${op.debugMeta.codeLen}, nameLen=${op.debugMeta.nameLen}, deptLen=${op.debugMeta.deptLen}, excess=${op.debugMeta.excessCount}, disc=${op.debugMeta.discountPercentage})`
+          );
+        }
+      }
+    }
+  }
+
+  // Step 2: Update directory index
+  try {
     if (isSuperAdmin || !dirSnap.exists()) {
-      batch.set(doc(db, 'directory', 'employees_index'), {
+      await setDoc(doc(db, 'directory', 'employees_index'), {
         items: finalItems,
         updatedAt: serverTimestamp()
       });
     } else {
-      batch.update(doc(db, 'directory', 'employees_index'), {
+      await updateDoc(doc(db, 'directory', 'employees_index'), {
         items: finalItems,
         updatedAt: serverTimestamp()
       });
     }
-  });
-
-  if (!assignSnap.exists()) {
-    operations.push((batch) =>
-      batch.set(doc(db, 'directory', 'admin_assignments'), {
+    if (!assignSnap.exists()) {
+      await setDoc(doc(db, 'directory', 'admin_assignments'), {
         items: [],
         updatedAt: serverTimestamp()
-      })
-    );
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'directory/employees_index');
   }
 
-  operations.push((batch) => {
+  // Step 3: Update stats summary
+  try {
     if (isSuperAdmin || !statsSnap.exists()) {
-      batch.set(doc(db, 'stats', 'summary'), {
+      await setDoc(doc(db, 'stats', 'summary'), {
         ...computed,
         seedInitialized: finalItems.length > 0,
         cycleLabel: nextCycleLabel,
         updatedAt: serverTimestamp()
       });
     } else {
-      batch.update(doc(db, 'stats', 'summary'), {
+      await updateDoc(doc(db, 'stats', 'summary'), {
         totalEmployees: computed.totalEmployees,
         avgDiscount: computed.avgDiscount,
         totalExcess: computed.totalExcess,
@@ -1085,22 +1155,8 @@ export async function importEmployeesFromExcelRows(params: {
         updatedAt: serverTimestamp()
       });
     }
-  });
-
-  // For assistant_admin, Firestore Rules evaluate get()/exists() per document in a batch (max 20 per batch),
-  // so keep batches small (4 writes) to never trip the batch lookup limit.
-  const chunkSize = isSuperAdmin ? 350 : 4;
-  try {
-    for (let i = 0; i < operations.length; i += chunkSize) {
-      const batch = writeBatch(db);
-      const slice = operations.slice(i, i + chunkSize);
-      for (const op of slice) {
-        op(batch);
-      }
-      await batch.commit();
-    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'employees');
+    handleFirestoreError(error, OperationType.WRITE, 'stats/summary');
   }
 
   return {
