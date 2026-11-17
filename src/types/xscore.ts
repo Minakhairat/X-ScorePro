@@ -69,6 +69,7 @@ export interface AdminAssignmentDirectoryItem {
   canAssignEmployees: boolean;
   active: boolean;
   assignedEmployeeIds: string[];
+  assignedDepartments?: string[];
 }
 
 export interface AdminRecord {
@@ -79,6 +80,7 @@ export interface AdminRecord {
   canAssignEmployees: boolean;
   active: boolean;
   assignedCount: number;
+  assignedDepartments?: string[];
   createdByEmail: string;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -138,7 +140,7 @@ export interface FullAppBackupPayload {
   stats: StatsSummary | null;
   departments: DepartmentItem[];
   employees: Employee[];
-  admins: Array<AdminRecord & { assignedEmployeeIds: string[] }>;
+  admins: Array<AdminRecord & { assignedEmployeeIds: string[]; assignedDepartments?: string[] }>;
   xscoreLogs: XScoreAuditLog[];
   monthlyArchives: MonthlyArchiveRecord[];
 }
@@ -153,6 +155,7 @@ export interface AdminSession {
   canAssignEmployees: boolean;
   active: boolean;
   assignedEmployeeIds: string[];
+  assignedDepartments: string[];
 }
 
 export const VIOLATION_CATEGORIES = [

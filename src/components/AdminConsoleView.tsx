@@ -568,7 +568,9 @@ export function AdminConsoleView({
               النطاق:{' '}
               {isSuperAdmin || session.role === 'assistant_admin'
                 ? `جميع الموظفين (${employees.length})`
-                : `الأفراد المعينون (${employees.length})`}
+                : session.assignedDepartments.length > 0
+                  ? `الخطوط: ${session.assignedDepartments.join('، ')} (${employees.length} موظف)`
+                  : `الأفراد المعينون (${employees.length})`}
             </span>
           </div>
           <h1 className="mt-1 text-xl sm:text-2xl font-extrabold text-slate-900">
@@ -751,13 +753,13 @@ export function AdminConsoleView({
             <p className="text-sm font-semibold text-slate-800">
               {employees.length === 0
                 ? session.role === 'supervisor'
-                  ? 'لم يتم تعيين أفراد لحسابك بعد.'
+                  ? 'لم يتم تحديد خطوط إنتاج أو أقسام لحسابك بعد (أو لا يوجد موظفون في الخطوط المعينة).'
                   : 'لا توجد بيانات موظفين حالياً في قاعدة البيانات.'
                 : 'لا توجد نتائج مطابقة للبحث أو الفلتر الحالي.'}
             </p>
             <p className="text-xs text-slate-500">
               {employees.length === 0 && session.role === 'supervisor'
-                ? 'تواصل مع الأدمن الرئيسي لاختيار الأفراد التابعين لإشرافك.'
+                ? 'تواصل مع الأدمن الرئيسي لاختيار خطوط الإنتاج والأقسام التابع لها إشرافك.'
                 : employees.length === 0 && canOnboardAndAssignDept
                   ? 'يمكنك رفع بيانات الموظفين من ملف Excel (.xlsx / .csv) أو إضافة موظف يدوياً من الأزرار بالأعلى.'
                   : 'جرّب تغيير كلمة البحث أو القسم أو الفلتر.'}

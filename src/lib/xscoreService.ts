@@ -186,7 +186,8 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
       email: user?.email || '',
       canAssignEmployees: false,
       active: false,
-      assignedEmployeeIds: []
+      assignedEmployeeIds: [],
+      assignedDepartments: []
     };
   }
 
@@ -200,7 +201,8 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
       email,
       canAssignEmployees: true,
       active: true,
-      assignedEmployeeIds: []
+      assignedEmployeeIds: [],
+      assignedDepartments: []
     };
   }
 
@@ -227,7 +229,8 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
       email,
       canAssignEmployees: false,
       active: false,
-      assignedEmployeeIds: []
+      assignedEmployeeIds: [],
+      assignedDepartments: []
     };
   }
 
@@ -254,9 +257,14 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
     handleFirestoreError(error, OperationType.WRITE, linkPath);
   }
 
-  // Assistant admins have access to all employees automatically without individual assignments
+  // Assistant admins have access to all employees automatically without individual/department assignments
   let assignedEmployeeIds: string[] = [];
+  let assignedDepartments: string[] = [];
   if (adminData.role === 'supervisor') {
+    assignedDepartments = Array.isArray(adminData.assignedDepartments)
+      ? adminData.assignedDepartments
+      : [];
+
     const dirPath = 'directory/admin_assignments';
     try {
       const dirSnap = await getDoc(doc(db, 'directory', 'admin_assignments'));
@@ -265,6 +273,9 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
         const myEntry = items.find((item) => item.id === adminDocId);
         if (myEntry) {
           assignedEmployeeIds = myEntry.assignedEmployeeIds || [];
+          if (assignedDepartments.length === 0 && Array.isArray(myEntry.assignedDepartments)) {
+            assignedDepartments = myEntry.assignedDepartments;
+          }
         }
       }
     } catch (error) {
@@ -279,7 +290,8 @@ export async function resolveAdminSession(user: User | null): Promise<AdminSessi
     email,
     canAssignEmployees: adminData.role === 'supervisor' ? false : adminData.canAssignEmployees,
     active: adminData.active,
-    assignedEmployeeIds
+    assignedEmployeeIds,
+    assignedDepartments
   };
 }
 
@@ -916,12 +928,31 @@ export async function addSubAdmin(params: {
   displayName: string;
   role: 'assistant_admin' | 'supervisor';
   canAssignEmployees: boolean;
+  assignedDepartments?: string[];
+  directoryEmployees?: DirectoryEmployeeItem[];
   createdByEmail: string;
 }): Promise<AdminRecord> {
   const email = params.email.trim().toLowerCase().slice(0, 120);
   const displayName = params.displayName.trim().slice(0, 80);
   const adminKey = `adm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const path = `admins/${adminKey}`;
+
+  const cleanDepartments =
+    params.role === 'supervisor'
+      ? Array.from(
+          new Set(
+            (params.assignedDepartments || [])
+              .map((d) => d.trim().slice(0, 80))
+              .filter(Boolean)
+          )
+        ).slice(0, 100)
+      : [];
+
+  const deptSet = new Set(cleanDepartments);
+  const matchedCount =
+    params.role === 'supervisor' && params.directoryEmployees
+      ? params.directoryEmployees.filter((e) => deptSet.has((e.department || 'عام').trim())).length
+      : 0;
 
   const existingAssignments = await fetchAdminAssignmentsDirectory();
   const newDirItem: AdminAssignmentDirectoryItem = {
@@ -930,7 +961,8 @@ export async function addSubAdmin(params: {
     role: params.role,
     canAssignEmployees: params.canAssignEmployees,
     active: true,
-    assignedEmployeeIds: []
+    assignedEmployeeIds: [],
+    assignedDepartments: cleanDepartments
   };
 
   const batch = writeBatch(db);
@@ -940,7 +972,8 @@ export async function addSubAdmin(params: {
     role: params.role,
     canAssignEmployees: params.canAssignEmployees,
     active: true,
-    assignedCount: 0,
+    assignedCount: matchedCount,
+    assignedDepartments: cleanDepartments,
     createdByEmail: params.createdByEmail.toLowerCase(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
@@ -964,7 +997,8 @@ export async function addSubAdmin(params: {
     role: params.role,
     canAssignEmployees: params.canAssignEmployees,
     active: true,
-    assignedCount: 0,
+    assignedCount: matchedCount,
+    assignedDepartments: cleanDepartments,
     createdByEmail: params.createdByEmail.toLowerCase()
   };
 }
@@ -972,7 +1006,10 @@ export async function addSubAdmin(params: {
 export async function updateSubAdminSettings(
   admin: AdminRecord,
   updates: Partial<
-    Pick<AdminRecord, 'email' | 'displayName' | 'role' | 'canAssignEmployees' | 'active'>
+    Pick<
+      AdminRecord,
+      'email' | 'displayName' | 'role' | 'canAssignEmployees' | 'active' | 'assignedDepartments'
+    >
   >
 ): Promise<void> {
   const path = `admins/${admin.id}`;
@@ -982,6 +1019,16 @@ export async function updateSubAdminSettings(
   const nextRole = updates.role ?? admin.role;
   const nextCanAssign = updates.canAssignEmployees ?? admin.canAssignEmployees;
   const nextActive = updates.active ?? admin.active;
+  const existingDirDepts =
+    existingAssignments.find((item) => item.id === admin.id)?.assignedDepartments || [];
+  const nextAssignedDepts = (
+    updates.assignedDepartments ??
+    admin.assignedDepartments ??
+    existingDirDepts
+  )
+    .map((d) => d.trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 100);
 
   const updatedAssignments = existingAssignments.map((item) =>
     item.id === admin.id
@@ -990,7 +1037,8 @@ export async function updateSubAdminSettings(
           displayName: nextDisplayName,
           role: nextRole,
           canAssignEmployees: nextCanAssign,
-          active: nextActive
+          active: nextActive,
+          assignedDepartments: nextAssignedDepts
         }
       : item
   );
@@ -1002,6 +1050,7 @@ export async function updateSubAdminSettings(
     role: nextRole,
     canAssignEmployees: nextCanAssign,
     active: nextActive,
+    assignedDepartments: nextAssignedDepts,
     updatedAt: serverTimestamp()
   });
   batch.set(doc(db, 'directory', 'admin_assignments'), {
@@ -1043,6 +1092,74 @@ export async function deleteSubAdmin(adminKey: string): Promise<void> {
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
+}
+
+export async function saveAdminDepartmentAssignments(params: {
+  targetAdminKey: string;
+  selectedDepartments: string[];
+  directoryEmployees: DirectoryEmployeeItem[];
+  previousEmployeeIds: string[];
+}): Promise<{ matchedCount: number }> {
+  const { targetAdminKey, selectedDepartments, directoryEmployees, previousEmployeeIds } = params;
+  const cleanDepartments = Array.from(
+    new Set(selectedDepartments.map((d) => d.trim().slice(0, 80)).filter(Boolean))
+  ).slice(0, 100);
+
+  const deptSet = new Set(cleanDepartments);
+  const matchedEmployees = directoryEmployees.filter((emp) =>
+    deptSet.has((emp.department || 'عام').trim())
+  );
+
+  const dirAssignments = await fetchAdminAssignmentsDirectory();
+  const updatedDirAssignments = dirAssignments.map((item) =>
+    item.id === targetAdminKey
+      ? {
+          ...item,
+          assignedDepartments: cleanDepartments,
+          assignedEmployeeIds: []
+        }
+      : item
+  );
+
+  const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+  // Clean up any legacy per-employee subcollection docs so department rules are the single source of truth
+  for (const empId of previousEmployeeIds) {
+    operations.push((batch) =>
+      batch.delete(doc(db, 'admins', targetAdminKey, 'assignedEmployees', empId))
+    );
+  }
+
+  operations.push((batch) =>
+    batch.update(doc(db, 'admins', targetAdminKey), {
+      assignedDepartments: cleanDepartments,
+      assignedCount: matchedEmployees.length,
+      updatedAt: serverTimestamp()
+    })
+  );
+
+  operations.push((batch) =>
+    batch.set(doc(db, 'directory', 'admin_assignments'), {
+      items: updatedDirAssignments,
+      updatedAt: serverTimestamp()
+    })
+  );
+
+  const chunkSize = 350;
+  try {
+    for (let i = 0; i < operations.length; i += chunkSize) {
+      const batch = writeBatch(db);
+      const slice = operations.slice(i, i + chunkSize);
+      for (const op of slice) {
+        op(batch);
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `admins/${targetAdminKey}`);
+  }
+
+  return { matchedCount: matchedEmployees.length };
 }
 
 export async function saveAdminEmployeeAssignments(params: {
@@ -1488,8 +1605,10 @@ export async function exportFullAppBackup(): Promise<FullAppBackupPayload> {
     ]);
 
   const assignmentMap = new Map<string, string[]>();
+  const deptAssignmentMap = new Map<string, string[]>();
   for (const item of assignmentsDir) {
     assignmentMap.set(item.id, item.assignedEmployeeIds || []);
+    deptAssignmentMap.set(item.id, item.assignedDepartments || []);
   }
 
   return {
@@ -1526,6 +1645,7 @@ export async function exportFullAppBackup(): Promise<FullAppBackupPayload> {
       canAssignEmployees: a.canAssignEmployees,
       active: a.active,
       assignedCount: a.assignedCount,
+      assignedDepartments: a.assignedDepartments || deptAssignmentMap.get(a.id) || [],
       createdByEmail: a.createdByEmail,
       assignedEmployeeIds: assignmentMap.get(a.id) || []
     })),
@@ -1712,8 +1832,23 @@ export async function importFullAppBackup(params: {
     const adminKey = sanitizeId(adm.id || `adm_${adminsCount + 1}`);
     const role: 'assistant_admin' | 'supervisor' =
       adm.role === 'assistant_admin' ? 'assistant_admin' : 'supervisor';
-    const assignedIds =
+    const assignedDepartments =
       role === 'supervisor'
+        ? Array.from(
+            new Set(
+              (adm.assignedDepartments || [])
+                .map((d) => String(d || '').trim().slice(0, 80))
+                .filter(Boolean)
+            )
+          ).slice(0, 100)
+        : [];
+    const assignedDeptSet = new Set(assignedDepartments);
+    const matchedDeptCount =
+      role === 'supervisor' && assignedDepartments.length > 0
+        ? sortedDirItems.filter((e) => assignedDeptSet.has((e.department || 'عام').trim())).length
+        : 0;
+    const assignedIds =
+      role === 'supervisor' && assignedDepartments.length === 0
         ? (adm.assignedEmployeeIds || [])
             .map((id) => sanitizeId(String(id)))
             .filter((id) => validEmployeeIds.has(id))
@@ -1728,7 +1863,8 @@ export async function importFullAppBackup(params: {
         role,
         canAssignEmployees: Boolean(adm.canAssignEmployees),
         active: adm.active !== false,
-        assignedCount: assignedIds.length,
+        assignedCount: assignedDepartments.length > 0 ? matchedDeptCount : assignedIds.length,
+        assignedDepartments,
         createdByEmail: superAdminEmail.toLowerCase(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -1741,7 +1877,8 @@ export async function importFullAppBackup(params: {
       role,
       canAssignEmployees: Boolean(adm.canAssignEmployees),
       active: adm.active !== false,
-      assignedEmployeeIds: assignedIds
+      assignedEmployeeIds: assignedIds,
+      assignedDepartments
     });
 
     for (const empId of assignedIds) {

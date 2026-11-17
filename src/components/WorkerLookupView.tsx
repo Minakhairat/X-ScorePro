@@ -30,7 +30,7 @@ interface WorkerLookupViewProps {
   summaryLoading: boolean;
   onRefreshSummary: () => void;
   session: AdminSession;
-  canQuickRecordFor: (employeeId: string) => boolean;
+  canQuickRecordFor: (employee: Employee) => boolean;
   onOpenRecordModal: (employee: Employee) => void;
   lastUpdatedEmployee: Employee | null;
   scopedEmployees?: Employee[];
@@ -137,7 +137,7 @@ export function WorkerLookupView({
     ? getLastMonthExcessAnalysis(employee, alertThreshold)
     : null;
   const allowAdminQuickAction =
-    employee && session.role !== 'none' && session.active && canQuickRecordFor(employee.id);
+    employee && session.role !== 'none' && session.active && canQuickRecordFor(employee);
 
   const resultCardHighlightClass = thresholdAnalysis?.crossed
     ? thresholdAnalysis.severity === 'critical'

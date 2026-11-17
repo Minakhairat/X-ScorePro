@@ -40,7 +40,8 @@ const EMPTY_SESSION: AdminSession = {
   email: '',
   canAssignEmployees: false,
   active: false,
-  assignedEmployeeIds: []
+  assignedEmployeeIds: [],
+  assignedDepartments: []
 };
 
 export default function App() {
@@ -98,6 +99,23 @@ export default function App() {
         const dirItems = await fetchDirectoryEmployeesIndex();
         setAdminEmployees(
           dirItems.map((item) => ({
+            id: item.id,
+            serial: item.serial,
+            code: item.code,
+            name: item.name,
+            department: item.department,
+            excessCount: item.excessCount,
+            discountPercentage: item.discountPercentage,
+            recentLogs: [],
+            assignedAdminKeys: []
+          }))
+        );
+      } else if (activeSession.assignedDepartments.length > 0) {
+        const dirItems = await fetchDirectoryEmployeesIndex();
+        const deptSet = new Set(activeSession.assignedDepartments.map((d) => d.trim()));
+        const matched = dirItems.filter((item) => deptSet.has((item.department || 'عام').trim()));
+        setAdminEmployees(
+          matched.map((item) => ({
             id: item.id,
             serial: item.serial,
             code: item.code,
@@ -197,10 +215,14 @@ export default function App() {
     await Promise.all([loadSummary(), loadAdminEmployees(freshSession)]);
   }, [currentUser, loadAdminEmployees, loadSummary]);
 
-  function canQuickRecordFor(employeeId: string): boolean {
+  function canQuickRecordFor(emp: Employee): boolean {
     if (!session.active || session.role === 'none') return false;
     if (session.role === 'super_admin' || session.role === 'assistant_admin') return true;
-    return session.assignedEmployeeIds.includes(employeeId);
+    const empDept = (emp.department || 'عام').trim();
+    return (
+      session.assignedDepartments.includes(empDept) ||
+      session.assignedEmployeeIds.includes(emp.id)
+    );
   }
 
   async function handleOpenRecordModal(employee: Employee) {

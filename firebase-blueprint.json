@@ -160,6 +160,10 @@
         "assignedCount": {
           "type": "number"
         },
+        "assignedDepartments": {
+          "type": "array",
+          "description": "Bounded list of department or production line names assigned to this supervisor (max 100)"
+        },
         "createdByEmail": {
           "type": "string",
           "maxLength": 120
