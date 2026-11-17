@@ -857,6 +857,7 @@ export async function importEmployeesFromExcelRows(params: {
   }
 
   const itemMap = new Map<string, DirectoryEmployeeItem>();
+  const existingRawMap = new Map<string, Record<string, unknown>>();
   let maxSerial = 0;
 
   if (isSuperAdmin) {
@@ -864,7 +865,9 @@ export async function importEmployeesFromExcelRows(params: {
     try {
       const actualSnap = await getDocs(collection(db, 'employees'));
       for (const d of actualSnap.docs) {
-        const data = d.data() as Omit<Employee, 'id'>;
+        const rawData = d.data() as Record<string, unknown>;
+        existingRawMap.set(d.id, rawData);
+        const data = rawData as Omit<Employee, 'id'>;
         const serial = Math.max(0, Math.min(1000000, Math.round(Number(data.serial) || 0)));
         if (serial > maxSerial) maxSerial = serial;
         itemMap.set(d.id, {
@@ -1016,7 +1019,7 @@ export async function importEmployeesFromExcelRows(params: {
   const empWriteOps: EmpWriteOp[] = [];
 
   for (const [empId, entry] of pendingWrites.entries()) {
-    if (entry.isUpdate) {
+    if (entry.isUpdate && !isSuperAdmin) {
       updatedCount += 1;
       empWriteOps.push({
         empId,
@@ -1026,6 +1029,46 @@ export async function importEmployeesFromExcelRows(params: {
           department: entry.department,
           excessCount: entry.excessCount,
           discountPercentage: entry.discountPercentage,
+          updatedAt: serverTimestamp()
+        },
+        debugMeta: {
+          serial: entry.serial,
+          codeLen: entry.code.length,
+          nameLen: entry.name.length,
+          deptLen: entry.department.length,
+          excessCount: entry.excessCount,
+          discountPercentage: entry.discountPercentage
+        }
+      });
+    } else if (entry.isUpdate && isSuperAdmin) {
+      updatedCount += 1;
+      const existingRaw = existingRawMap.get(empId);
+      const rawCreatedAt = existingRaw?.createdAt as { toDate?: unknown } | undefined;
+      const hasValidTimestamp = Boolean(rawCreatedAt && typeof rawCreatedAt.toDate === 'function');
+      const safeRecentLogs = Array.isArray(existingRaw?.recentLogs)
+        ? existingRaw.recentLogs
+            .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+            .slice(0, 50)
+        : [];
+      const safeAdminKeys = Array.isArray(existingRaw?.assignedAdminKeys)
+        ? existingRaw.assignedAdminKeys
+            .filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length <= 64)
+            .slice(0, 15)
+        : [];
+      // Note: use setDoc/batch.set (isUpdate: false for SDK method) to strip any legacy shadow fields and repair missing fields
+      empWriteOps.push({
+        empId,
+        isUpdate: false,
+        payload: {
+          serial: entry.serial,
+          code: entry.code,
+          name: entry.name,
+          department: entry.department,
+          excessCount: entry.excessCount,
+          discountPercentage: entry.discountPercentage,
+          recentLogs: safeRecentLogs,
+          assignedAdminKeys: safeAdminKeys,
+          createdAt: hasValidTimestamp ? rawCreatedAt : serverTimestamp(),
           updatedAt: serverTimestamp()
         },
         debugMeta: {

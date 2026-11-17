@@ -256,7 +256,14 @@ service cloud.firestore {
 
       allow update: if isValidId(employeeId)
         && isValidEmployee(incoming())
-        && incoming().createdAt == existing().createdAt
+        && (
+          incoming().createdAt == existing().createdAt
+          || (
+            isSuperAdmin()
+            && (!('createdAt' in existing()) || !(existing().createdAt is timestamp))
+            && incoming().createdAt == request.time
+          )
+        )
         && incoming().updatedAt == request.time
         && (
           isSuperAdmin()
